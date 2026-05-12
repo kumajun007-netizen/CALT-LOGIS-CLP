@@ -470,9 +470,11 @@ if file is not None:
                     
                     # 범례 표시
                     st.markdown(
-                        f"<span style='background:#e67e22;padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ HC 필요 (H>{max_dry_h}mm)</span>"
+                        f"<span style='background:{ALERT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ FR (OW/OH)</span>"
                         f"&nbsp;&nbsp;"
-                        f"<span style='background:{ACCENT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ DRY 가능 (H≤{max_dry_h}mm)</span>",
+                        f"<span style='background:#e67e22;padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ HC (H>{max_dry_h}mm)</span>"
+                        f"&nbsp;&nbsp;"
+                        f"<span style='background:{ACCENT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ DRY (H≤{max_dry_h}mm)</span>",
                         unsafe_allow_html=True
                     )
                     fig = go.Figure()
@@ -482,8 +484,10 @@ if file is not None:
                     for r in b['rows']:
                         cy = (2350 - r['used_W']) / 2
                         for item in r['items']:
-                            # CLP 참고: HC 필요 화물(H > DRY 기준) → 주황, Dry 가능 → 파란색
-                            item_color = "#e67e22" if item['H'] > max_dry_h else ACCENT_COLOR
+                            # CLP 참고: FR(OW/OH)→빨강, HC→주황, Dry→파랑
+                            if item['W'] > 2350 or item['H'] > max_hc_h: item_color = ALERT_COLOR
+                            elif item['H'] > max_dry_h: item_color = "#e67e22"
+                            else: item_color = ACCENT_COLOR
                             fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=item_color, opacity=0.85, line=dict(color="white", width=1))
                             fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2,
                                 text=f"{item['PKG NO']}<br><sub>H{item['H']}</sub>",
