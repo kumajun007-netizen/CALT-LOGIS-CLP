@@ -449,10 +449,74 @@ if file is not None:
             m3.metric("컨테이너 수", f"{len(bins)} UNIT")
             m4.metric("평균 중량", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg")
 
+            # 타입별 제원 매핑
+            TYPE_SPECS = {
+                '20ft Dry': {'max_len': max_20_len,   'max_wt': max_20_wt,   'max_h': max_dry_h, 'label_base': '20ft Dry'},
+                '40ft Dry': {'max_len': max_40_len,   'max_wt': max_40_wt,   'max_h': max_dry_h, 'label_base': '40ft Dry'},
+                '40ft HC' : {'max_len': max_40_len,   'max_wt': max_40_wt,   'max_h': max_hc_h,  'label_base': '40ft HC'},
+                '20ft FR' : {'max_len': max_fr20_len, 'max_wt': max_fr20_wt, 'max_h': max_fr_h,  'label_base': '20ft Flat Rack'},
+                '40ft FR' : {'max_len': max_fr40_len, 'max_wt': max_fr40_wt, 'max_h': max_fr_h,  'label_base': '40ft Flat Rack'},
+            }
+            def _get_cur_type(label):
+                if '20ft Dry'       in label: return '20ft Dry'
+                if '40ft HC'        in label: return '40ft HC'
+                if '40ft Dry'       in label: return '40ft Dry'
+                if '20ft Flat Rack' in label: return '20ft FR'
+                if '40ft Flat Rack' in label: return '40ft FR'
+                return '40ft Dry'
+
             for b in bins:
                 if b['used_L'] == 0 and not b.get('stacked_items'): continue
                 st.markdown(f'<div class="container-box">', unsafe_allow_html=True)
-                st.markdown(f"### 📦 {b['c_label']}")
+
+                # ── 컨테이너 헤더 + 타입 재계산 UI ──────────────────────
+                hcol1, hcol2, hcol3 = st.columns([4, 2, 1])
+                hcol1.markdown(f"### 📦 {b['c_label']}")
+                cur_type = _get_cur_type(b['c_label'])
+                new_type = hcol2.selectbox(
+                    "타입 변경", list(TYPE_SPECS.keys()),
+                    index=list(TYPE_SPECS.keys()).index(cur_type),
+                    key=f"type_sel_{b['id']}", label_visibility="collapsed"
+                )
+                if hcol3.button("🔄 재계산", key=f"retype_{b['id']}"):
+                    spec = TYPE_SPECS[new_type]
+                    all_items = [i for r in b['rows'] for i in r['items']] + b.get('stacked_items', [])
+                    # 새 제원으로 재배치 시도
+                    new_bin = {'id': b['id'], 'rows': [], 'used_L': 0, 'total_W': 0,
+                               'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                    overflow = []
+                    for item in all_items:
+                        before = sum(len(r['items']) for r in new_bin['rows']) + len(new_bin.get('stacked_items',[]))
+                        pack_items_into_bin([item], new_bin, spec['max_wt'], spec['max_len'])
+                        after  = sum(len(r['items']) for r in new_bin['rows']) + len(new_bin.get('stacked_items',[]))
+                        if after == before:
+                            overflow.append(item)
+                    # 높이/폭 초과 화물 체크
+                    h_exceed = [i for i in (new_bin['stacked_items'] + [x for r in new_bin['rows'] for x in r['items']]) if i['H'] > spec['max_h']]
+                    # 새 레이블 부여
+                    new_bin['c_label'] = f"{spec['label_base']} #{b['id']}"
+                    # 기존 bins에서 해당 bin 교체
+                    updated = []
+                    for bx in st.session_state.bins:
+                        if bx['id'] == b['id']: updated.append(new_bin)
+                        else: updated.append(bx)
+                    # 초과 화물 새 bin으로 추가
+                    if overflow:
+                        max_id = max(bx['id'] for bx in updated)
+                        ov_bin = {'id': max_id+1, 'rows': [], 'used_L': 0, 'total_W': 0,
+                                  'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                        for item in overflow:
+                            pack_items_into_bin([item], ov_bin, max_40_wt, max_40_len)
+                        updated.append(ov_bin)
+                        st.warning(f"⚠️ {len(overflow)}개 화물이 {new_type} 제원 초과 → 새 컨테이너 #{max_id+1}로 분리됐습니다.")
+                    if h_exceed:
+                        st.error(f"🚨 {len(h_exceed)}개 화물(H 초과)이 포함됩니다. CLP 작성 시 확인하세요.")
+                    st.session_state.bins = apply_labels(
+                        sorted(updated, key=lambda x: x['id']),
+                        max_20_len, max_20_wt, max_dry_h, max_hc_h,
+                        max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt
+                    )
+                    st.rerun()
                 t_data = []
                 for r in b['rows']:
                     for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
