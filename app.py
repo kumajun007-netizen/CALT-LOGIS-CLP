@@ -6,6 +6,7 @@ import os
 import io
 import re
 
+# 💡 안전장치: 기본 옵션 강제 선언
 allow_stacking = False
 use_balancing = True
 
@@ -81,12 +82,13 @@ with st.container():
         </div>
     """, unsafe_allow_html=True)
 
+# 💡 초강력 숫자 추출기 (안 보이는 특수문자, 띄어쓰기 전부 무시하고 숫자만 빼냅니다)
 def clean_num(val):
     try:
         if pd.isna(val): return 0.0
         s = str(val).replace(',', '').strip()
         if s.upper() in ['', '.', 'X', 'NAN', 'NONE']: return 0.0 
-        match = re.search(r'[-+]?\d*\.?\d+', s)
+        match = re.search(r'\d+\.?\d*', s)
         if match: return float(match.group())
         return 0.0
     except: return 0.0
@@ -99,6 +101,14 @@ def get_col_idx(letter):
         for c in letter: ans = ans * 26 + (ord(c) - ord('A') + 1)
         return ans - 1
     except: return 0
+
+# 💡 투시경용 엑셀 알파벳 생성기
+def get_excel_col_name(n):
+    res = ""
+    while n >= 0:
+        res = chr(n % 26 + ord('A')) + res
+        n = n // 26 - 1
+    return res
 
 def safe_get(row, idx):
     if 0 <= idx < len(row): return row.iloc[idx]
@@ -115,7 +125,7 @@ with st.sidebar:
         st.image(logo_path, use_column_width=True)
 
     with st.expander("📄 엑셀 열 매핑 (알파벳 지정)", expanded=True):
-        st.markdown("<p style='font-size:12px; color:gray;'>양식이 바뀌면 아래 알파벳만 변경하세요.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:12px; color:gray;'>투시경을 보고 데이터가 있는 알파벳을 입력하세요.</p>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         col_pkg = c1.text_input("PKG NO (필수)", value="B", on_change=reset_data)
         col_wt = c2.text_input("WEIGHT (선택)", value="I", on_change=reset_data)
@@ -260,7 +270,7 @@ if file is not None:
             raw_pkg = safe_get(row, idx_pkg)
             str_pkg = str(raw_pkg).strip()
             
-            if pd.notna(raw_pkg) and str_pkg not in ['', 'None', 'nan', 'NaN', '.', 'No.of PKG', 'PKG NO', 'Invoice No']:
+            if pd.notna(raw_pkg) and str_pkg not in ['', 'None', 'nan', 'NaN', '.', 'No.of PKG', 'PKG NO', 'Invoice No', 'DIMENSION']:
                 last_pkg_no = str_pkg
                 
             pkg_v = last_pkg_no
@@ -269,17 +279,16 @@ if file is not None:
             h_v = clean_num(safe_get(row, idx_h))
             weight_v = clean_num(safe_get(row, idx_wt))
             
-            # 💡 핵심 수정: 이 줄이 스킵된 이유를 완벽하게 분석하여 기록합니다.
             skip_reasons = []
             if pkg_v == "UNKNOWN": skip_reasons.append("PKG NO 누락")
-            if l_v == 0: skip_reasons.append("L(길이) 없음/0")
-            if w_v == 0: skip_reasons.append("W(폭) 없음/0")
-            if h_v == 0: skip_reasons.append("H(높이) 없음/0")
+            if l_v == 0: skip_reasons.append("L(길이) 없음")
+            if w_v == 0: skip_reasons.append("W(폭) 없음")
+            if h_v == 0: skip_reasons.append("H(높이) 없음")
             
             status = "✅ 정상 인식" if not skip_reasons else "❌ 스킵: " + ", ".join(skip_reasons)
             
             debug_logs.append({
-                '엑셀 행 번호': i + 1, '상태': status, 'PKG': pkg_v,
+                '행번호': i + 1, '상태': status, 'PKG': pkg_v,
                 'L': l_v, 'W': w_v, 'H': h_v, 'WT': weight_v
             })
             
@@ -298,9 +307,17 @@ if file is not None:
         df = pd.DataFrame(p_data)
         
         if df.empty:
-            st.error("⚠️ 데이터 스캔 실패: 설정된 열에서 (L, W, H) 필수 숫자를 찾지 못했습니다.")
-            st.info("💡 아래 진단표의 **[상태]** 칸을 보시면 시스템이 왜 화물을 거부했는지 정확히 알 수 있습니다. 오류가 발생한 H열 등을 사이드바에서 수정해 주세요!")
-            with st.expander("🔍 AI 데이터 스캔 진단표 (원인 찾기)", expanded=True):
+            st.error("⚠️ 파이썬이 데이터를 읽다가 열(Column)이 밀려버렸습니다! (숨겨진 열 때문일 확률 99%)")
+            st.info("💡 **[해결 방법]** 바로 아래의 **'엑셀 투시경'**을 열고, 찾고자 하는 길이/폭/높이가 **실제로 어떤 알파벳 밑에 있는지** 확인한 후 왼쪽 사이드바 알파벳을 고쳐주세요.")
+            
+            # 💡 초강력 무기: 엑셀 투시경 (파이썬이 인식한 진짜 열 알파벳 보여주기)
+            with st.expander("🔍 [투시경] 파이썬이 읽어들인 엑셀 원본 보기 (이 표의 알파벳을 믿으세요!)", expanded=True):
+                excel_cols = [get_excel_col_name(i) for i in range(raw_full.shape[1])]
+                raw_view = raw_full.copy()
+                raw_view.columns = excel_cols
+                st.dataframe(raw_view.head(25))
+                
+            with st.expander("⚙️ 스캔 상세 진단표 (어떤 줄이 스킵됐을까?)", expanded=False):
                 st.dataframe(pd.DataFrame(debug_logs))
         else:
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
@@ -393,8 +410,7 @@ if file is not None:
                         fig.update_layout(xaxis=dict(visible=False, range=[-200, bg_x1+400]), yaxis=dict(visible=False, range=[-300, 3100]), height=280, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)")
                         st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                     except Exception as e:
-                        st.error(f"🚨 이 컨테이너({b['c_label']})의 도면을 그리는 중 내부 오류가 발생했습니다.")
-                        st.info(f"기술적 오류 코드: {e}")
+                        st.error(f"🚨 도면 렌더링 오류 발생 ({b['c_label']})")
                 st.markdown('</div>', unsafe_allow_html=True)
 
             export_df = raw_full.copy()
