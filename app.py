@@ -4,7 +4,11 @@ import plotly.graph_objects as go
 import math
 import os
 import io
-import re  # 숫자 추출을 위한 정규표현식 라이브러리 추가
+import re
+
+# 💡 안전장치: 코드가 일부 누락되어도 시스템이 뻗지 않도록 기본값을 최상단에 강제 선언합니다.
+allow_stacking = False
+use_balancing = True
 
 # --- 1. 화면 스타일 및 테마 설정 ---
 st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
@@ -78,29 +82,22 @@ with st.container():
         </div>
     """, unsafe_allow_html=True)
 
-# 💡 핵심 수정: 어떤 문자열이 들어와도 오직 숫자만 강제로 뜯어내는 극한의 클리닝 함수
 def clean_num(val):
     try:
         if pd.isna(val): return 0.0
         s = str(val).replace(',', '').strip()
-        if s in ['', '.', 'X', 'x', 'NaN', 'nan', 'None']: return 0.0 
-        
-        # 정규표현식: 문자열 내에서 숫자 형태(소수점 포함)만 스캔하여 첫 번째 매칭값 반환
+        if s.upper() in ['', '.', 'X', 'NAN', 'NONE']: return 0.0 
         match = re.search(r'[-+]?\d*\.?\d+', s)
-        if match:
-            return float(match.group())
+        if match: return float(match.group())
         return 0.0
-    except: 
-        return 0.0
+    except: return 0.0
 
 def get_col_idx(letter):
-    """엑셀 알파벳(A, B, C...)을 시스템 인덱스(0, 1, 2...)로 변환"""
     try:
         letter = str(letter).upper().strip()
         if not letter: return 0
         ans = 0
-        for c in letter:
-            ans = ans * 26 + (ord(c) - ord('A') + 1)
+        for c in letter: ans = ans * 26 + (ord(c) - ord('A') + 1)
         return ans - 1
     except: return 0
 
@@ -164,10 +161,10 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 # --- 짐 배치 핵심 로직 ---
-def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
+def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, is_stack_allowed):
     for piece in pieces:
         placed = False
-        if allow_stacking and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+        if is_stack_allowed and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             if 'stacked_items' not in b: b['stacked_items'] = []
             b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']; b['groups'].add(piece['GROUP']); placed = True
             continue
@@ -204,7 +201,7 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
-def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing):
+def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, is_bal_allowed, is_stack_allowed):
     all_pieces = []
     for _, row in df.iterrows():
         l, w, h, weight = int(row['L'] + 0.5), int(row['W'] + 0.5), int(row['H'] + 0.5), int(row['WEIGHT'] + 0.5)
@@ -213,7 +210,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
     all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
     bins = []; c_no = 1
-    if use_balancing:
+    if is_bal_allowed:
         total_l, total_w = sum(p['L'] for p in all_pieces), sum(p['WEIGHT'] for p in all_pieces)
         est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
         for _ in range(est_bins):
@@ -221,14 +218,14 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             c_no += 1
     for piece in all_pieces:
         placed = False
-        if use_balancing: bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
+        if is_bal_allowed: bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
         for b in bins:
-            pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+            pack_items_into_bin([piece], b, max_40_wt, max_40_len, is_stack_allowed)
             if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']): 
                 placed = True; break
         if not placed:
             new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-            pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
+            pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len, is_stack_allowed)
             bins.append(new_bin); c_no += 1
     bins = [b for b in bins if b['used_L'] > 0 or b.get('stacked_items')]
     bins.sort(key=lambda x: x['id'])
@@ -252,16 +249,14 @@ if file is not None:
         idx_desc = get_col_idx(col_desc)
 
         p_data = []
-        debug_logs = []  # 에러 시 보여줄 진단표 로그
+        debug_logs = []  
         last_pkg_no = "UNKNOWN"
 
         for i in range(len(raw_full)):
             row = raw_full.iloc[i]
-            
             raw_pkg = safe_get(row, idx_pkg)
             str_pkg = str(raw_pkg).strip()
             
-            # 병합셀 대비 로직 (윗줄 데이터 물려받기)
             if pd.notna(raw_pkg) and str_pkg not in ['', 'None', 'nan', 'NaN', '.', 'No.of PKG', 'PKG NO', 'Invoice No']:
                 last_pkg_no = str_pkg
                 
@@ -276,7 +271,6 @@ if file is not None:
             h_v = clean_num(raw_h)
             weight_v = clean_num(raw_wt)
             
-            # 디버깅 스캔 로그 기록
             debug_logs.append({
                 '행번호': i + 1, 'PKG (원본)': raw_pkg, 'PKG (인식)': pkg_v,
                 'L(원본)': raw_l, 'L(숫자)': l_v, 'W(원본)': raw_w, 'W(숫자)': w_v, 'H(원본)': raw_h, 'H(숫자)': h_v
@@ -290,27 +284,22 @@ if file is not None:
             val_desc = str(safe_get(row, idx_desc)).strip() if pd.notna(safe_get(row, idx_desc)) else "-"
 
             p_data.append({
-                'PKG NO': pkg_v, 
-                'GROUP': val_group_item, 
-                'ITEM': val_group_item, 
-                'DESC': val_desc, 
-                'L': l_v, 'W': w_v, 'H': h_v, 'WEIGHT': weight_v, 
-                'STACK_OK': s_ok, 'row_idx': i
+                'PKG NO': pkg_v, 'GROUP': val_group_item, 'ITEM': val_group_item, 'DESC': val_desc, 
+                'L': l_v, 'W': w_v, 'H': h_v, 'WEIGHT': weight_v, 'STACK_OK': s_ok, 'row_idx': i
             })
         
         df = pd.DataFrame(p_data)
         
-        # 💡 에러 발생 시 자동 진단(디버깅) 화면 표출!
         if df.empty:
             st.error("⚠️ 설정된 열(Column)에서 필수 항목(L, W, H)을 0보다 큰 숫자로 변환하지 못했습니다.")
             st.info("💡 아래 진단표를 통해 시스템이 데이터를 어떻게 스캔했는지 확인해보세요. (값이 0.0으로 파싱된 경우 열 지정이 어긋났을 수 있습니다)")
             with st.expander("🔍 AI 데이터 스캔 진단표 펼쳐보기", expanded=True):
-                st.dataframe(pd.DataFrame(debug_logs).head(30)) # 처음 30줄 표시
+                st.dataframe(pd.DataFrame(debug_logs).head(30))
         else:
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
 
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
-                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing)
+                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing, allow_stacking)
                 st.session_state.manual_mode = True
 
             bins = st.session_state.bins
@@ -352,7 +341,7 @@ if file is not None:
                         new_bins_dict = {}
                         for item, t_id in new_alloc:
                             if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                            pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
+                            pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len, allow_stacking)
                         st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h, max_hc_h)
                         st.rerun()
 
