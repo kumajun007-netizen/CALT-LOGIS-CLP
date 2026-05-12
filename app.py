@@ -503,28 +503,67 @@ if file is not None:
                         f"<span style='background:{ACCENT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ DRY (H≤{max_dry_h}mm)</span>",
                         unsafe_allow_html=True
                     )
+                    from collections import Counter
+                    stk_cnt  = Counter((s['L'],s['W'],s['H']) for s in b.get('stacked_items',[]))
+                    base_cnt = Counter((i['L'],i['W'],i['H']) for r in b['rows'] for i in r['items'])
+
+                    # ── 평면도 (L × W, 위에서 본 뷰) ──────────────────────
                     fig = go.Figure()
-                    fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
-                    fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
+                    fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2340, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
+                    fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2340, line=dict(color=MAIN_COLOR, width=2))
                     cx = 0
                     for r in b['rows']:
                         cy = (2340 - r['used_W']) / 2
                         for item in r['items']:
-                            # CLP 참고: FR(OW/OH)→빨강, HC→주황, Dry→파랑
-                            if item['W'] > 2350 or item['H'] > max_hc_h: item_color = ALERT_COLOR
+                            dim = (item['L'], item['W'], item['H'])
+                            layers = 1 + stk_cnt.get(dim, 0) // max(1, base_cnt.get(dim, 1))
+                            if item['W'] > 2340 or item['H'] > max_hc_h: item_color = ALERT_COLOR
                             elif item['H'] > max_dry_h: item_color = "#e67e22"
                             else: item_color = ACCENT_COLOR
-                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=item_color, opacity=0.85, line=dict(color="white", width=1))
+                            # 다단 화물: 테두리 강조
+                            border = dict(color="#FFD700", width=3) if layers > 1 else dict(color="white", width=1)
+                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=item_color, opacity=0.85, line=border)
+                            stk_label = f"<b>×{layers}단</b><br>" if layers > 1 else ""
                             fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2,
-                                text=f"{item['PKG NO']}<br><sub>H{item['H']}</sub>",
+                                text=f"{stk_label}{item['PKG NO']}<br><sub>H{item['H']}</sub>",
                                 showarrow=False, font=dict(color="white", size=9))
                             cy += item['W']
                         cx += r['max_L']
                     fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                     if b['used_L'] > 100: fig.add_annotation(x=b['used_L']/2, y=2650, text=f"적재: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=13, weight="bold"))
                     if cur_max_l - b['used_L'] > 100: fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=2650, text=f"잔여: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=13, weight="bold"))
-                    fig.update_layout(xaxis=dict(visible=False, range=[-200, max_40_len+400]), yaxis=dict(visible=False, range=[-300, 3100]), height=280, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)")
+                    fig.update_layout(xaxis=dict(visible=False, range=[-200, max_40_len+400]), yaxis=dict(visible=False, range=[-300, 3100]), height=260, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
+
+                    # ── 측면도 (L × H, 앞에서 본 뷰) — 다단 적재 시에만 표시 ──
+                    if stk_cnt:
+                        st.markdown("<small>📐 **측면도** (L × H, 앞에서 본 뷰) — 다단 적재 화물</small>", unsafe_allow_html=True)
+                        fig2 = go.Figure()
+                        fig2.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=cur_max_h, line=dict(color=MAIN_COLOR, width=2))
+                        fig2.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=cur_max_h, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
+                        cx2 = 0
+                        for r in b['rows']:
+                            for item in r['items']:
+                                dim = (item['L'], item['W'], item['H'])
+                                layers = 1 + stk_cnt.get(dim, 0) // max(1, base_cnt.get(dim, 1))
+                                if item['W'] > 2340 or item['H'] > max_hc_h: c2 = ALERT_COLOR
+                                elif item['H'] > max_dry_h: c2 = "#e67e22"
+                                else: c2 = ACCENT_COLOR
+                                # 각 단 표시
+                                for lyr in range(layers):
+                                    y0_l = lyr * item['H']
+                                    y1_l = y0_l + item['H']
+                                    alpha = 0.9 - lyr * 0.15
+                                    fig2.add_shape(type="rect", x0=cx2, y0=y0_l, x1=cx2+item['L'], y1=y1_l, fillcolor=c2, opacity=max(0.5, alpha), line=dict(color="white", width=1))
+                                    lyr_label = f"{item['PKG NO']}" if layers == 1 else f"{lyr+1}단"
+                                    fig2.add_annotation(x=cx2+item['L']/2, y=y0_l+item['H']/2, text=lyr_label, showarrow=False, font=dict(color="white", size=8))
+                            cx2 += r['max_L']
+                        # 높이 기준선
+                        fig2.add_shape(type="line", x0=0, y0=max_dry_h, x1=cur_max_l, y1=max_dry_h, line=dict(color="#e67e22", width=1, dash="dot"))
+                        fig2.add_annotation(x=cur_max_l+100, y=max_dry_h, text=f"DRY<br>{max_dry_h}", showarrow=False, font=dict(color="#e67e22", size=8), xanchor="left")
+                        fig2.add_shape(type="line", x0=0, y0=cur_max_h, x1=cur_max_l, y1=cur_max_h, line=dict(color=MAIN_COLOR, width=1, dash="dot"))
+                        fig2.update_layout(xaxis=dict(visible=False, range=[-200, max_40_len+600]), yaxis=dict(visible=False, range=[-100, cur_max_h+400]), height=220, margin=dict(l=10, r=60, t=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
+                        st.plotly_chart(fig2, use_container_width=True, key=f"plot2_{b['id']}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
             # --- 최종 결과 다운로드: 원본 엑셀 양식 유지 ---
