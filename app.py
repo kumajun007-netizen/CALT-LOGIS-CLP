@@ -164,9 +164,6 @@ with st.sidebar:
         max_fr40_wt  = st.number_input("최대 중량 (kg)",  10000, 45000, 30000, key="i_fr40wt")
         max_fr40_len = st.number_input("최대 길이 (mm)",  8000,  14000, 11600, key="i_fr40len")
 
-    with st.expander("🛠 적재 로직", expanded=True):
-        allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
-    
     if st.button("🔄 AI 재계산 실행"):
         st.session_state['manual_mode'] = False
 
@@ -177,7 +174,7 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
         # 다단 적재: REMARK 지시(2단/3단) 또는 전역 옵션
         # 핵심 원칙: 바닥(rows)에 동일 치수 화물이 있어야만 그 위에 적재 가능
         max_stk = piece.get('MAX_STK', 1)
-        can_stack = (allow_stacking and piece['STACK_OK']) or max_stk > 1
+        can_stack = (False and piece['STACK_OK']) or max_stk > 1
         if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             dim = (piece['L'], piece['W'], piece['H'])
             # 바닥(rows)에 있는 동일 치수 화물 수
