@@ -12,7 +12,7 @@ st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
 MAIN_COLOR = "#001f3f"
 SUB_COLOR = "#f0f2f6"
 ACCENT_COLOR = "#007bff"
-ALERT_COLOR = "#e74c3c" # OH/OW 경고용 빨간색
+ALERT_COLOR = "#e74c3c"
 
 st.markdown(f"""
     <style>
@@ -33,12 +33,17 @@ st.markdown(f"""
     
     .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
     
+    /* 메트릭 박스 높이 완벽 고정 */
     [data-testid="stMetric"] {{
         background-color: white;
         padding: 15px;
         border-radius: 10px;
         border-left: 5px solid {MAIN_COLOR};
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        height: 100%; /* 높이 균일화 */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }}
 
     .stButton>button {{
@@ -219,12 +224,14 @@ if file is not None:
         bins = st.session_state.bins
         target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
-        # --- 대시보드 요약 지표 ---
-        st.subheader("📊 실시간 적재 요약")
+        # --- 💡 수정 1: 대시보드 요약 지표 (높이 통일 및 크로스체크 명시) ---
+        st.subheader("📊 실시간 적재 요약 (무결성 검증)")
         m1, m2, m3, m4 = st.columns(4)
         packed_qty = sum([len(r['items']) for b in bins for r in b['rows']]) + sum([len(b.get('stacked_items', [])) for b in bins])
+        
+        # 델타 값(↑0 등)을 제거하여 4개 박스 높이를 완벽하게 동일하게 맞춤
         m1.metric("총 화물 수량", f"{len(df)} PKG")
-        m2.metric("배정 완료", f"{packed_qty} PKG", f"{packed_qty - len(df)}")
+        m2.metric("배정 완료 수량", f"{packed_qty} PKG") 
         m3.metric("필요 컨테이너", f"{len(bins)} UNIT")
         m4.metric("평균 중량 효율", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg/UNIT")
 
@@ -269,18 +276,15 @@ if file is not None:
             st.markdown("<br>", unsafe_allow_html=True)
 
             with st.expander("👁️ 적재 단면도 및 4대 제원(길이/중량/폭/높이) 확인 (클릭하여 펼치기)", expanded=False):
-                # 💡 추가: 폭과 높이, 길이에 대한 제원 기준 설정
                 cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                 cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
                 cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
                 std_width = 2350
                 
-                # 실제 점유 폭과 높이 계산
                 used_width = max([r['used_W'] for r in b['rows']] + [0])
                 max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
                 used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
                 
-                # 💡 4개 지표를 가로로 나란히 배치
                 col_g1, col_g2, col_g3, col_g4 = st.columns(4)
                 
                 with col_g1:
@@ -309,7 +313,6 @@ if file is not None:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # 도면 시각화
                 fig = go.Figure()
                 fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
                 fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
@@ -323,7 +326,6 @@ if file is not None:
                         cy += item['W']
                     cx += r['max_L']
                 
-                # 길이 점선 및 잔여 공간 텍스트
                 fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2550, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                 
                 if b['used_L'] > 300:
@@ -331,7 +333,6 @@ if file is not None:
                 if cur_max_l - b['used_L'] > 300:
                     fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=-300, text=f"잔여 공간: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=12, weight="bold"))
                 
-                # x축의 최대 범위를 무조건 40ft 기준으로 픽스
                 fig.update_layout(
                     xaxis=dict(visible=False, range=[-200, max_40_len + 400]), 
                     yaxis=dict(visible=False, range=[-500, 2600]), 
