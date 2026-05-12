@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import math
 import os
 import io
+import re  # 숫자 추출을 위한 정규표현식 라이브러리 추가
 
 # --- 1. 화면 스타일 및 테마 설정 ---
 st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
@@ -62,6 +63,10 @@ st.markdown(f"""
         border: 1px solid #e1e4e8;
         margin-bottom: 20px;
     }}
+    .guide-table {{ font-size: 11px; width: 100%; border-collapse: collapse; }}
+    .guide-table th, .guide-table td {{ border: 1px solid #ddd; padding: 5px; text-align: center; }}
+    .guide-table th {{ background-color: #eee; }}
+    .essential {{ color: {ALERT_COLOR}; font-weight: bold; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -73,16 +78,26 @@ with st.container():
         </div>
     """, unsafe_allow_html=True)
 
+# 💡 핵심 수정: 어떤 문자열이 들어와도 오직 숫자만 강제로 뜯어내는 극한의 클리닝 함수
 def clean_num(val):
     try:
-        if pd.isna(val) or str(val).strip() in ['', '.', 'X', 'x', 'NaN', 'nan']: return 0.0 
-        return float(str(val).replace(',', '').strip())
-    except: return 0.0
+        if pd.isna(val): return 0.0
+        s = str(val).replace(',', '').strip()
+        if s in ['', '.', 'X', 'x', 'NaN', 'nan', 'None']: return 0.0 
+        
+        # 정규표현식: 문자열 내에서 숫자 형태(소수점 포함)만 스캔하여 첫 번째 매칭값 반환
+        match = re.search(r'[-+]?\d*\.?\d+', s)
+        if match:
+            return float(match.group())
+        return 0.0
+    except: 
+        return 0.0
 
 def get_col_idx(letter):
     """엑셀 알파벳(A, B, C...)을 시스템 인덱스(0, 1, 2...)로 변환"""
     try:
         letter = str(letter).upper().strip()
+        if not letter: return 0
         ans = 0
         for c in letter:
             ans = ans * 26 + (ord(c) - ord('A') + 1)
@@ -97,13 +112,12 @@ def reset_data():
     if 'bins' in st.session_state: del st.session_state['bins']
     if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
 
-# --- 2. 사이드바: 엑셀 열 가이드 및 설정 ---
+# --- 2. 사이드바: 엑셀 열 매핑 가이드 및 설정 ---
 with st.sidebar:
     logo_path = "칼트로지스로고.png"
     if os.path.exists(logo_path):
         st.image(logo_path, use_column_width=True)
 
-    # 💡 킬러 기능: 사용자가 직접 엑셀 알파벳 열을 컨트롤 할 수 있는 UI 추가
     with st.expander("📄 엑셀 열 매핑 (알파벳 지정)", expanded=True):
         st.markdown("<p style='font-size:12px; color:gray;'>양식이 바뀌면 아래 알파벳만 변경하세요.</p>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
@@ -227,7 +241,6 @@ file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['cs
 
 if file is not None:
     try:
-        # 💡 수정: skiprows를 완전히 제거하고 1번 줄부터 끝까지 전부 스캔합니다.
         raw_full = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
         
         idx_pkg = get_col_idx(col_pkg)
@@ -239,29 +252,40 @@ if file is not None:
         idx_desc = get_col_idx(col_desc)
 
         p_data = []
-        last_pkg_no = "UNKNOWN" # 병합셀 처리를 위한 변수
+        debug_logs = []  # 에러 시 보여줄 진단표 로그
+        last_pkg_no = "UNKNOWN"
 
         for i in range(len(raw_full)):
             row = raw_full.iloc[i]
-            s_ok = row.astype(str).str.contains('단적허용').any() if allow_stacking else False
             
-            # 지정된 열에서 데이터 추출
             raw_pkg = safe_get(row, idx_pkg)
+            str_pkg = str(raw_pkg).strip()
             
-            # 💡 수정: PKG NO가 비어있어도 윗줄의 PKG NO를 그대로 물려받습니다 (병합셀 완벽 대응)
-            if pd.notna(raw_pkg) and str(raw_pkg).strip() not in ['', '.', 'nan', 'No.of PKG', 'PKG NO']:
-                last_pkg_no = str(raw_pkg).strip()
-            
+            # 병합셀 대비 로직 (윗줄 데이터 물려받기)
+            if pd.notna(raw_pkg) and str_pkg not in ['', 'None', 'nan', 'NaN', '.', 'No.of PKG', 'PKG NO', 'Invoice No']:
+                last_pkg_no = str_pkg
+                
             pkg_v = last_pkg_no
-            l_v = clean_num(safe_get(row, idx_l))
-            w_v = clean_num(safe_get(row, idx_w))
-            h_v = clean_num(safe_get(row, idx_h))
-            weight_v = clean_num(safe_get(row, idx_wt))
+            raw_l = safe_get(row, idx_l)
+            raw_w = safe_get(row, idx_w)
+            raw_h = safe_get(row, idx_h)
+            raw_wt = safe_get(row, idx_wt)
             
-            # 💡 수정: 필수 제원(L, W, H) 3개가 모두 0보다 큰 숫자일 때만 진짜 화물로 인정!
+            l_v = clean_num(raw_l)
+            w_v = clean_num(raw_w)
+            h_v = clean_num(raw_h)
+            weight_v = clean_num(raw_wt)
+            
+            # 디버깅 스캔 로그 기록
+            debug_logs.append({
+                '행번호': i + 1, 'PKG (원본)': raw_pkg, 'PKG (인식)': pkg_v,
+                'L(원본)': raw_l, 'L(숫자)': l_v, 'W(원본)': raw_w, 'W(숫자)': w_v, 'H(원본)': raw_h, 'H(숫자)': h_v
+            })
+            
             if l_v == 0 or w_v == 0 or h_v == 0 or pkg_v == "UNKNOWN":
                 continue
             
+            s_ok = row.astype(str).str.contains('단적허용').any() if allow_stacking else False
             val_group_item = str(safe_get(row, idx_grp)).strip() if pd.notna(safe_get(row, idx_grp)) else "-"
             val_desc = str(safe_get(row, idx_desc)).strip() if pd.notna(safe_get(row, idx_desc)) else "-"
 
@@ -276,12 +300,12 @@ if file is not None:
         
         df = pd.DataFrame(p_data)
         
-        # 만약 진짜 못 찾았을 경우 디버깅 화면 제공
+        # 💡 에러 발생 시 자동 진단(디버깅) 화면 표출!
         if df.empty:
-            st.error("⚠️ 설정된 열(Column)에서 필수 항목(L, W, H) 숫자를 찾지 못했습니다.")
-            st.info("💡 사이드바의 **[엑셀 열 매핑]** 알파벳이 실제 엑셀 파일과 일치하는지 확인해 주세요.")
-            with st.expander("🔍 시스템이 읽어들인 엑셀 원본 구조 보기 (어떤 열에 데이터가 있는지 확인하세요)", expanded=True):
-                st.dataframe(raw_full.head(15))
+            st.error("⚠️ 설정된 열(Column)에서 필수 항목(L, W, H)을 0보다 큰 숫자로 변환하지 못했습니다.")
+            st.info("💡 아래 진단표를 통해 시스템이 데이터를 어떻게 스캔했는지 확인해보세요. (값이 0.0으로 파싱된 경우 열 지정이 어긋났을 수 있습니다)")
+            with st.expander("🔍 AI 데이터 스캔 진단표 펼쳐보기", expanded=True):
+                st.dataframe(pd.DataFrame(debug_logs).head(30)) # 처음 30줄 표시
         else:
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
 
