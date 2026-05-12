@@ -558,14 +558,24 @@ if file is not None:
             # --- 최종 결과 다운로드: 원본 엑셀 양식 유지 ---
             st.markdown("---")
 
-            mapping = {
-                item['row_idx']: bx['c_label']
-                for bx in bins
-                for item in (
-                    [i for r in bx['rows'] for i in r['items']]
-                    + bx.get('stacked_items', [])
-                )
-            }
+            # ── mapping 생성: BOX 화물은 컨테이너별 요약, 일반은 1:1
+            from collections import defaultdict, Counter as _Counter
+            row_container_cnt = defaultdict(_Counter)  # row_idx → {c_label: count}
+            row_detail_list   = defaultdict(list)       # row_idx → [(pkg_no, c_label)]
+            for bx in bins:
+                for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
+                    row_container_cnt[item['row_idx']][bx['c_label']] += 1
+                    row_detail_list[item['row_idx']].append((item['PKG NO'], bx['c_label']))
+
+            mapping = {}
+            for row_idx, counter in row_container_cnt.items():
+                total = sum(counter.values())
+                if total > 1:  # BOX 모드 → 컨테이너별 요약
+                    mapping[row_idx] = " / ".join(
+                        f"{lbl} ({cnt}개)" for lbl, cnt in counter.items()
+                    )
+                else:
+                    mapping[row_idx] = list(counter.keys())[0]
 
             if file.name.endswith('.xlsx'):
                 file.seek(0)
@@ -590,13 +600,10 @@ if file is not None:
                     dst_cell.alignment = copy(src_cell.alignment)
                     dst_cell.number_format = src_cell.number_format
 
-                # 배정 결과 입력
-                # row_idx는 pandas 기준 0부터 시작하므로 엑셀 행 번호는 +1
+                # 배정 결과 입력 (row_idx는 pandas 기준 → 엑셀 행 번호 +1)
                 for r_idx, label in mapping.items():
                     excel_row = int(r_idx) + 1
                     ws.cell(row=excel_row, column=target_col).value = label
-
-                    # 왼쪽 셀의 양식 복사
                     if target_col > 1:
                         src_cell = ws.cell(row=excel_row, column=target_col - 1)
                         dst_cell = ws.cell(row=excel_row, column=target_col)
@@ -606,7 +613,22 @@ if file is not None:
                         dst_cell.alignment = copy(src_cell.alignment)
                         dst_cell.number_format = src_cell.number_format
 
-                ws.column_dimensions[target_letter].width = 25
+                ws.column_dimensions[target_letter].width = 30
+
+                # ── BOX 화물이 있으면 "배정상세" 시트 추가
+                box_details = [(pkg, c_label)
+                               for row_idx, details in row_detail_list.items()
+                               if len(details) > 1
+                               for pkg, c_label in details]
+                if box_details:
+                    if "배정상세" in wb.sheetnames:
+                        del wb["배정상세"]
+                    ws_d = wb.create_sheet("배정상세")
+                    ws_d.append(["PKG NO", "배정 컨테이너"])
+                    ws_d.column_dimensions["A"].width = 20
+                    ws_d.column_dimensions["B"].width = 30
+                    for pkg, c_label in box_details:
+                        ws_d.append([pkg, c_label])
 
                 output = io.BytesIO()
                 wb.save(output)
