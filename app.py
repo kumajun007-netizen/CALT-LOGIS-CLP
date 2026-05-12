@@ -279,7 +279,6 @@ if file is not None:
                     for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
                 for s in b.get('stacked_items', []): t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번"})
                 
-                # 💡 수정 1: 표(DataFrame)에 H(높이) 열 추가
                 df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'H', 'WEIGHT', '이동']]
                 edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
                                         column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
@@ -307,17 +306,32 @@ if file is not None:
                     cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                     cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
                     cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
+                    std_width = 2350
                     used_width = max([r['used_W'] for r in b['rows']] + [0])
                     max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
                     used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
                     
+                    # 💡 핵심 수정: 폭과 높이도 기본 수치와 진행바를 항상 유지하고, 초과 시 옆에 빨간 글씨만 추가
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.markdown(f"**📏 길이:** {b['used_L']:,}/{cur_max_l:,}mm"); c1.progress(min(1.0, b['used_L']/cur_max_l))
-                    c2.markdown(f"**⚖️ 중량:** {b['total_W']:,}/{cur_max_w:,}kg"); c2.progress(min(1.0, b['total_W']/cur_max_w))
-                    if used_width > 2350: c3.markdown(f"**↔️ 폭:** <span style='color:{ALERT_COLOR};'>OW(+{used_width-2350:,})</span>", unsafe_allow_html=True)
-                    else: c3.markdown(f"**↔️ 폭:** {used_width:,}/2350mm"); c3.progress(min(1.0, used_width/2350))
-                    if used_height > cur_max_h: c4.markdown(f"**↕️ 높이:** <span style='color:{ALERT_COLOR};'>OH(+{used_height-cur_max_h:,})</span>", unsafe_allow_html=True)
-                    else: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm"); c4.progress(min(1.0, used_height/cur_max_h))
+                    c1.markdown(f"**📏 길이:** {b['used_L']:,} / {cur_max_l:,} mm")
+                    c1.progress(min(1.0, b['used_L']/cur_max_l))
+                    
+                    c2.markdown(f"**⚖️ 중량:** {b['total_W']:,} / {cur_max_w:,} kg")
+                    c2.progress(min(1.0, b['total_W']/cur_max_w))
+                    
+                    if used_width > std_width:
+                        c3.markdown(f"**↔️ 폭:** {used_width:,} / {std_width:,} mm <span style='color:{ALERT_COLOR}; font-weight:bold;'>[OW +{used_width - std_width:,}]</span>", unsafe_allow_html=True)
+                        c3.progress(1.0)
+                    else:
+                        c3.markdown(f"**↔️ 폭:** {used_width:,} / {std_width:,} mm")
+                        c3.progress(min(1.0, used_width/std_width))
+                        
+                    if used_height > cur_max_h:
+                        c4.markdown(f"**↕️ 높이:** {used_height:,} / {cur_max_h:,} mm <span style='color:{ALERT_COLOR}; font-weight:bold;'>[OH +{used_height - cur_max_h:,}]</span>", unsafe_allow_html=True)
+                        c4.progress(1.0)
+                    else:
+                        c4.markdown(f"**↕️ 높이:** {used_height:,} / {cur_max_h:,} mm")
+                        c4.progress(min(1.0, used_height/cur_max_h))
                     
                     fig = go.Figure()
                     fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
@@ -331,23 +345,14 @@ if file is not None:
                             cy += item['W']
                         cx += r['max_L']
                     
-                    # 💡 수정 2: 글자가 잘리지 않도록 y축 범위를 넓히고 상단 여백 추가
                     fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                     
-                    # 글씨 위치를 도면 상단(y=2650)으로 이동
                     if b['used_L'] > 300:
                         fig.add_annotation(x=b['used_L']/2, y=2650, text=f"적재: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=13, weight="bold"))
                     if cur_max_l - b['used_L'] > 300:
                         fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=2650, text=f"잔여: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=13, weight="bold"))
                     
-                    # y축 상단 렌위를 늘리고, top margin(t)를 넓게 확보
-                    fig.update_layout(
-                        xaxis=dict(visible=False, range=[-200, max_40_len+400]), 
-                        yaxis=dict(visible=False, range=[-300, 3100]), 
-                        height=280, 
-                        margin=dict(l=10, r=10, t=30, b=10), 
-                        paper_bgcolor="rgba(0,0,0,0)"
-                    )
+                    fig.update_layout(xaxis=dict(visible=False, range=[-200, max_40_len+400]), yaxis=dict(visible=False, range=[-300, 3100]), height=280, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
