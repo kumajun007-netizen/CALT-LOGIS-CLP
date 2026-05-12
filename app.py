@@ -92,7 +92,6 @@ def clean_num(val):
         return 0.0
     except: return 0.0
 
-# 💡 방탄 로직 1: 사용자가 "N열"이라고 치든 " N "이라고 치든 무조건 알파벳만 뜯어냅니다.
 def get_col_idx(letter):
     try:
         letter = re.sub(r'[^A-Z]', '', str(letter).upper())
@@ -102,20 +101,24 @@ def get_col_idx(letter):
         return max(0, ans - 1)
     except: return 0
 
-# 💡 방탄 로직 2: 에러의 주범인 Pandas .iloc을 버리고, 무적의 NumPy 배열(.to_numpy)로 데이터를 가져옵니다.
 def safe_get(row, idx):
     try:
         idx = int(idx)
         arr = row.to_numpy()
-        if 0 <= idx < len(arr):
-            return arr[idx]
-    except:
-        pass
+        if 0 <= idx < len(arr): return arr[idx]
+    except: pass
     return None
 
 def reset_data():
     if 'bins' in st.session_state: del st.session_state['bins']
     if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
+
+def get_excel_col_name(n):
+    res = ""
+    while n >= 0:
+        res = chr(n % 26 + ord('A')) + res
+        n = n // 26 - 1
+    return res
 
 # --- 2. 사이드바: 엑셀 열 매핑 가이드 및 설정 ---
 with st.sidebar:
@@ -169,27 +172,48 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 # --- 짐 배치 핵심 로직 ---
+# 💡 핵심 방탄 패치: 모든 데이터를 무조건 .get() 으로 가져와서 KeyError 발생을 원천 차단합니다.
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, is_stack_allowed):
     for piece in pieces:
+        p_wt = piece.get('WEIGHT', 0)
+        p_w = piece.get('W', 0)
+        p_l = piece.get('L', 0)
+        p_h = piece.get('H', 0)
+        p_grp = piece.get('GROUP', '')
+        p_stk = piece.get('STACK_OK', False)
+        
         placed = False
-        if is_stack_allowed and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+        if is_stack_allowed and p_stk and p_wt <= 1000 and b['total_W'] + p_wt <= max_40_wt:
             if 'stacked_items' not in b: b['stacked_items'] = []
-            b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']; b['groups'].add(piece['GROUP']); placed = True
+            b['stacked_items'].append(piece)
+            b['total_W'] += p_wt
+            b['groups'].add(p_grp)
             continue
+            
         row_found = False
         for r in b['rows']:
-            temp_max_L = max(r['max_L'], piece['L'])
-            if r['used_W'] + piece['W'] <= 2350 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
-                r['items'].append(piece); r['used_W'] += piece['W']; b['used_L'] += (temp_max_L - r['max_L'])
-                r['max_L'] = temp_max_L; b['total_W'] += piece['WEIGHT']
-                b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
-                b['groups'].add(piece['GROUP']); row_found = True; placed = True; break
+            temp_max_L = max(r['max_L'], p_l)
+            if r['used_W'] + p_w <= 2350 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + p_wt <= max_40_wt:
+                r['items'].append(piece)
+                r['used_W'] += p_w
+                b['used_L'] += (temp_max_L - r['max_L'])
+                r['max_L'] = temp_max_L
+                b['total_W'] += p_wt
+                b['max_W'] = max(b['max_W'], p_w)
+                b['max_H'] = max(b['max_H'], p_h)
+                b['groups'].add(p_grp)
+                row_found = True
+                break
+                
         if row_found: continue
-        if b['used_L'] + piece['L'] <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
-            b['rows'].append({'items': [piece], 'used_W': piece['W'], 'max_L': piece['L']})
-            b['used_L'] += piece['L']; b['total_W'] += piece['WEIGHT']
-            b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
-            b['groups'].add(piece['GROUP']); placed = True
+        
+        if b['used_L'] + p_l <= max_40_len and b['total_W'] + p_wt <= max_40_wt:
+            b['rows'].append({'items': [piece], 'used_W': p_w, 'max_L': p_l})
+            b['used_L'] += p_l
+            b['total_W'] += p_wt
+            b['max_W'] = max(b['max_W'], p_w)
+            b['max_H'] = max(b['max_H'], p_h)
+            b['groups'].add(p_grp)
 
 def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
     for b in bins:
@@ -212,25 +236,32 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, is_bal_allowed, is_stack_allowed):
     all_pieces = []
     for _, row in df.iterrows():
-        l = max(1, int(row['L'] + 0.5))
-        w = max(1, int(row['W'] + 0.5))
-        h = max(1, int(row['H'] + 0.5))
-        weight = max(0, int(row['WEIGHT'] + 0.5))
+        # 💡 핵심 방탄 패치: Pandas 시리즈를 순수 파이썬 딕셔너리로 확실하게 강제 변환하여 메모리 휘발을 막습니다.
+        l = max(1, int(row.get('L', 0) + 0.5))
+        w = max(1, int(row.get('W', 0) + 0.5))
+        h = max(1, int(row.get('H', 0) + 0.5))
+        weight = max(0, int(row.get('WEIGHT', 0) + 0.5))
+        
         if max(l, w) <= 2350: el, ew = min(l, w), max(l, w)
         else: el, ew = max(l, w), min(l, w)
-        all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
         
-    all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
+        d = row.to_dict()
+        d.update({'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
+        all_pieces.append(d)
+        
+    all_pieces.sort(key=lambda x: (-x.get('W', 0), -x.get('H', 0), -x.get('L', 0), x.get('GROUP', '')))
+    
     bins = []; c_no = 1
     if is_bal_allowed:
-        total_l, total_w = sum(p['L'] for p in all_pieces), sum(p['WEIGHT'] for p in all_pieces)
+        total_l, total_w = sum(p.get('L', 0) for p in all_pieces), sum(p.get('WEIGHT', 0) for p in all_pieces)
         est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
         for _ in range(est_bins):
             bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
             c_no += 1
+            
     for piece in all_pieces:
         placed = False
-        if is_bal_allowed: bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
+        if is_bal_allowed: bins.sort(key=lambda b: (0 if piece.get('GROUP', '') in b['groups'] else 1, b['used_L']))
         for b in bins:
             pack_items_into_bin([piece], b, max_40_wt, max_40_len, is_stack_allowed)
             if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']): 
@@ -239,17 +270,11 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
             pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len, is_stack_allowed)
             bins.append(new_bin); c_no += 1
+            
     bins = [b for b in bins if b['used_L'] > 0 or b.get('stacked_items')]
     bins.sort(key=lambda x: x['id'])
     for idx, b in enumerate(bins): b['id'] = idx + 1
     return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
-
-def get_excel_col_name(n):
-    res = ""
-    while n >= 0:
-        res = chr(n % 26 + ord('A')) + res
-        n = n // 26 - 1
-    return res
 
 # --- 3. 메인 화면 로직 ---
 st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
@@ -365,7 +390,7 @@ if file is not None:
                             for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
                                 target = bx['id']
                                 for m_pkg, m_tgt in moves:
-                                    if str(item['PKG NO']) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
+                                    if str(item.get('PKG NO')) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
                                 new_alloc.append((item, target))
                         new_bins_dict = {}
                         for item, t_id in new_alloc:
@@ -379,8 +404,10 @@ if file is not None:
                         cur_max_l = float(max_20_len or 5899) if "20ft" in b['c_label'] else float(max_40_len or 12034)
                         cur_max_w = float(max_20_wt or 28250) if "20ft" in b['c_label'] else float(max_40_wt or 29500)
                         cur_max_h = float(max_hc_h or 2695) if "HC" in b['c_label'] else float(max_dry_h or 2390)
-                        used_width = max([r['used_W'] for r in b['rows']] + [0])
-                        max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
+                        used_width = max([r.get('used_W', 0) for r in b['rows']] + [0])
+                        
+                        # 💡 핵심 방탄 패치: 도면을 그릴 때 H 키가 없어도 무조건 0으로 대체하여 그립니다.
+                        max_stacked_h = max([s.get('H', 0) for s in b.get('stacked_items', [])] + [0])
                         used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
                         
                         c1, c2, c3, c4 = st.columns(4)
@@ -403,10 +430,13 @@ if file is not None:
                         for r in b['rows']:
                             cy = (2350 - r['used_W']) / 2
                             for item in r['items']:
-                                fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.8, line=dict(color="white", width=1))
-                                fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
-                                cy += item['W']
-                            cx += r['max_L']
+                                i_l = item.get('L', 0)
+                                i_w = item.get('W', 0)
+                                i_pkg = str(item.get('PKG NO', ''))
+                                fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+i_l, y1=cy+i_w, fillcolor=ACCENT_COLOR, opacity=0.8, line=dict(color="white", width=1))
+                                fig.add_annotation(x=cx+i_l/2, y=cy+i_w/2, text=i_pkg, showarrow=False, font=dict(color="white", size=10))
+                                cy += i_w
+                            cx += r.get('max_L', 0)
                             
                         fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                         if b['used_L'] > 100: fig.add_annotation(x=b['used_L']/2, y=2650, text=f"적재: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=13, weight="bold"))
