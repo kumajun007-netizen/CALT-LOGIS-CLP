@@ -4,9 +4,8 @@ import plotly.graph_objects as go
 import math
 import os
 import io
-import re  # 강력한 숫자 추출기
+import re
 
-# 💡 안전장치: 코드가 일부 누락되어도 시스템이 뻗지 않도록 기본값을 최상단에 강제 선언
 allow_stacking = False
 use_balancing = True
 
@@ -82,7 +81,6 @@ with st.container():
         </div>
     """, unsafe_allow_html=True)
 
-# 💡 무적 파싱 로직: 글자, 쉼표, 기호가 섞여있어도 순수 숫자만 강제 추출
 def clean_num(val):
     try:
         if pd.isna(val): return 0.0
@@ -205,12 +203,10 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, is_bal_allowed, is_stack_allowed):
     all_pieces = []
     for _, row in df.iterrows():
-        # 💡 에러 방지 1: 크기가 0.X mm라서 0이 되어버리는 유령 화물 방지 (무조건 최소 1mm 보장)
         l = max(1, int(row['L'] + 0.5))
         w = max(1, int(row['W'] + 0.5))
         h = max(1, int(row['H'] + 0.5))
         weight = max(0, int(row['WEIGHT'] + 0.5))
-        
         if max(l, w) <= 2350: el, ew = min(l, w), max(l, w)
         else: el, ew = max(l, w), min(l, w)
         all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
@@ -268,22 +264,26 @@ if file is not None:
                 last_pkg_no = str_pkg
                 
             pkg_v = last_pkg_no
-            raw_l = safe_get(row, idx_l)
-            raw_w = safe_get(row, idx_w)
-            raw_h = safe_get(row, idx_h)
-            raw_wt = safe_get(row, idx_wt)
+            l_v = clean_num(safe_get(row, idx_l))
+            w_v = clean_num(safe_get(row, idx_w))
+            h_v = clean_num(safe_get(row, idx_h))
+            weight_v = clean_num(safe_get(row, idx_wt))
             
-            l_v = clean_num(raw_l)
-            w_v = clean_num(raw_w)
-            h_v = clean_num(raw_h)
-            weight_v = clean_num(raw_wt)
+            # 💡 핵심 수정: 이 줄이 스킵된 이유를 완벽하게 분석하여 기록합니다.
+            skip_reasons = []
+            if pkg_v == "UNKNOWN": skip_reasons.append("PKG NO 누락")
+            if l_v == 0: skip_reasons.append("L(길이) 없음/0")
+            if w_v == 0: skip_reasons.append("W(폭) 없음/0")
+            if h_v == 0: skip_reasons.append("H(높이) 없음/0")
+            
+            status = "✅ 정상 인식" if not skip_reasons else "❌ 스킵: " + ", ".join(skip_reasons)
             
             debug_logs.append({
-                '행번호': i + 1, 'PKG (원본)': raw_pkg, 'PKG (인식)': pkg_v,
-                'L(원본)': raw_l, 'L(숫자)': l_v, 'W(원본)': raw_w, 'W(숫자)': w_v, 'H(원본)': raw_h, 'H(숫자)': h_v
+                '엑셀 행 번호': i + 1, '상태': status, 'PKG': pkg_v,
+                'L': l_v, 'W': w_v, 'H': h_v, 'WT': weight_v
             })
             
-            if l_v == 0 or w_v == 0 or h_v == 0 or pkg_v == "UNKNOWN":
+            if skip_reasons:
                 continue
             
             s_ok = row.astype(str).str.contains('단적허용').any() if allow_stacking else False
@@ -298,9 +298,10 @@ if file is not None:
         df = pd.DataFrame(p_data)
         
         if df.empty:
-            st.error("⚠️ 설정된 열(Column)에서 필수 항목(L, W, H)을 0보다 큰 숫자로 변환하지 못했습니다.")
-            with st.expander("🔍 AI 데이터 스캔 진단표 펼쳐보기", expanded=True):
-                st.dataframe(pd.DataFrame(debug_logs).head(30))
+            st.error("⚠️ 데이터 스캔 실패: 설정된 열에서 (L, W, H) 필수 숫자를 찾지 못했습니다.")
+            st.info("💡 아래 진단표의 **[상태]** 칸을 보시면 시스템이 왜 화물을 거부했는지 정확히 알 수 있습니다. 오류가 발생한 H열 등을 사이드바에서 수정해 주세요!")
+            with st.expander("🔍 AI 데이터 스캔 진단표 (원인 찾기)", expanded=True):
+                st.dataframe(pd.DataFrame(debug_logs))
         else:
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
 
@@ -371,12 +372,9 @@ if file is not None:
                         else: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,.0f}mm"); c4.progress(min(1.0, used_height/cur_max_h))
                         
                         fig = go.Figure()
-                        
-                        # 💡 에러 방지 2: 속성 오류를 방지하기 위해 엄격한 dict 속성(line=dict(width=0)) 적용
                         bg_x1 = max(cur_max_l, b['used_L'])
                         if bg_x1 > b['used_L']:
                             fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=bg_x1, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line=dict(width=0))
-                        
                         fig.add_shape(type="rect", x0=0, y0=0, x1=bg_x1, y1=2350, line=dict(color=MAIN_COLOR, width=2))
                         
                         cx = 0
@@ -389,18 +387,14 @@ if file is not None:
                             cx += r['max_L']
                             
                         fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
-                        
                         if b['used_L'] > 100: fig.add_annotation(x=b['used_L']/2, y=2650, text=f"적재: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=13, weight="bold"))
                         if cur_max_l - b['used_L'] > 100: fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=2650, text=f"잔여: {cur_max_l - b['used_L']:,.0f}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=13, weight="bold"))
                         
                         fig.update_layout(xaxis=dict(visible=False, range=[-200, bg_x1+400]), yaxis=dict(visible=False, range=[-300, 3100]), height=280, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)")
                         st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
-                        
-                    # 💡 에러 방지 3: 특정 컨테이너 도면이 뻗어도 앱 전체가 다운되지 않도록 예외 처리
                     except Exception as e:
                         st.error(f"🚨 이 컨테이너({b['c_label']})의 도면을 그리는 중 내부 오류가 발생했습니다.")
                         st.info(f"기술적 오류 코드: {e}")
-
                 st.markdown('</div>', unsafe_allow_html=True)
 
             export_df = raw_full.copy()
