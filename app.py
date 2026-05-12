@@ -196,12 +196,40 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
     return bins
 
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing):
-    all_pieces = []
+    # ── Step 1: 치수 정규화
+    raw_pieces = []
     for _, row in df.iterrows():
         l, w, h, weight = int(row['L'] + 0.5), int(row['W'] + 0.5), int(row['H'] + 0.5), int(row['WEIGHT'] + 0.5)
-        if max(l, w) <= 2350: el, ew = min(l, w), max(l, w)
-        else: el, ew = max(l, w), min(l, w)
-        all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
+        raw_pieces.append({**row.to_dict(), 'L': l, 'W': w, 'H': h, 'WEIGHT': weight})
+
+    # ── Step 2: 동일 크기 그룹핑 + 나란히 최적 방향 결정
+    # 같은 치수의 화물 N개를 배치할 때 컨테이너 L 소비가 최소인 방향 선택
+    size_groups = {}
+    for p in raw_pieces:
+        key = (min(p['L'], p['W']), max(p['L'], p['W']))
+        size_groups.setdefault(key, []).append(p)
+
+    all_pieces = []
+    for (s, lg), items in size_groups.items():
+        n = len(items)
+        # 방향 A: el=s(짧은쪽→컨테이너L), ew=lg(긴쪽→컨테이너W)
+        # 방향 B: el=lg(긴쪽→컨테이너L), ew=s(짧은쪽→컨테이너W) ← 회전
+        can_a = lg <= 2350
+        can_b = s <= 2350
+        if can_a and can_b:
+            slots_a = max(1, int(2350 // lg))
+            slots_b = max(1, int(2350 // s))
+            L_used_a = math.ceil(n / slots_a) * s
+            L_used_b = math.ceil(n / slots_b) * lg
+            # 나란히 2개 이상 가능하고 L 소비가 더 적은 방향으로
+            use_el, use_ew = (lg, s) if (L_used_b < L_used_a and slots_b >= 2) else (s, lg)
+        elif can_b:
+            use_el, use_ew = lg, s
+        else:
+            use_el, use_ew = s, lg
+
+        for p in items:
+            all_pieces.append({**p, 'L': use_el, 'W': use_ew})
     all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
     bins = []; c_no = 1
     if use_balancing:
