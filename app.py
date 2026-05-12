@@ -179,9 +179,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         req = "FR" if ew > 2350 or el > fr_max_len or h > max_hc_h else "DRY"
         all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight, 'REQ_TYPE': req})
     
-    # 💡 핵심 수정: 크기가 같고 큰 화물(특히 W, H)끼리 뭉치도록 정렬 로직 완전 개편
-    # 정렬 우선순위: 1순위(컨테이너 종류), 2순위(폭이 넓은 것), 3순위(높이가 높은 것), 4순위(길이가 긴 것), 5순위(그룹)
-    # 내림차순을 위해 앞에 마이너스(-) 기호를 붙여 가장 큰 치수끼리 먼저 뭉치게 만듭니다.
+    # 정렬 우선순위: 폭 넓은것 -> 높이 높은것 -> 길이 긴것 -> 그룹 순
     all_pieces.sort(key=lambda x: (x['REQ_TYPE'], -x['W'], -x['H'], -x['L'], x['GROUP']))
     
     bins = []; c_no = 1
@@ -281,10 +279,11 @@ if file is not None:
                     for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
                 for s in b.get('stacked_items', []): t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번"})
                 
-                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'WEIGHT', '이동']]
+                # 💡 수정 1: 표(DataFrame)에 H(높이) 열 추가
+                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'H', 'WEIGHT', '이동']]
                 edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
                                         column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
-                                        disabled=['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'WEIGHT'])
+                                        disabled=['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'H', 'WEIGHT'])
                 
                 if st.button(f"🚀 {b['id']}번 변경사항 적용", key=f"btn_{b['id']}"):
                     moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
@@ -331,8 +330,24 @@ if file is not None:
                             fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
                             cy += item['W']
                         cx += r['max_L']
-                    fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2550, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
-                    fig.update_layout(xaxis=dict(visible=False, range=[-200, max_40_len+400]), yaxis=dict(visible=False, range=[-500, 2600]), height=260, margin=dict(l=10, r=10, t=15, b=10), paper_bgcolor="rgba(0,0,0,0)")
+                    
+                    # 💡 수정 2: 글자가 잘리지 않도록 y축 범위를 넓히고 상단 여백 추가
+                    fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
+                    
+                    # 글씨 위치를 도면 상단(y=2650)으로 이동
+                    if b['used_L'] > 300:
+                        fig.add_annotation(x=b['used_L']/2, y=2650, text=f"적재: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=13, weight="bold"))
+                    if cur_max_l - b['used_L'] > 300:
+                        fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=2650, text=f"잔여: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=13, weight="bold"))
+                    
+                    # y축 상단 렌위를 늘리고, top margin(t)를 넓게 확보
+                    fig.update_layout(
+                        xaxis=dict(visible=False, range=[-200, max_40_len+400]), 
+                        yaxis=dict(visible=False, range=[-300, 3100]), 
+                        height=280, 
+                        margin=dict(l=10, r=10, t=30, b=10), 
+                        paper_bgcolor="rgba(0,0,0,0)"
+                    )
                     st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
