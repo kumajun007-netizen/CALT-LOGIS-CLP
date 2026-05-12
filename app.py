@@ -138,14 +138,15 @@ with st.sidebar:
 
     st.header("⚙️ 배정 옵션 설정")
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
-        max_40_wt = st.number_input("40ft 중량 (kg)", 20000, 40000, 29500)
-        max_40_len = st.number_input("40ft 길이 (mm)", 11000, 13000, 12034)
+        st.markdown("**🟦 20ft DRY**")
+        max_20_wt  = st.number_input("최대 중량 (kg)",  15000, 40000, 28250, key="i_20wt")
+        max_20_len = st.number_input("최대 길이 (mm)",  5500,  6500,  5899,  key="i_20len")
         st.markdown("---")
-        max_20_wt = st.number_input("20ft 중량 (kg)", 15000, 40000, 28250)
-        max_20_len = st.number_input("20ft 길이 (mm)", 5500, 6500, 5899)
-        st.markdown("---")
-        max_dry_h = st.number_input("DRY 높이 (mm)", 2000, 3000, 2390)
-        max_hc_h = st.number_input("HC 높이 (mm)", 2000, 3500, 2695)
+        st.markdown("**🟫 40ft DRY / HC**")
+        max_40_wt  = st.number_input("최대 중량 (kg)",  20000, 40000, 29500, key="i_40wt")
+        max_40_len = st.number_input("최대 길이 (mm)",  11000, 13000, 12034, key="i_40len")
+        max_dry_h  = st.number_input("DRY 내부 높이 (mm)", 2000, 3000, 2390, key="i_dryh")
+        max_hc_h   = st.number_input("HC 내부 높이 (mm)",  2000, 3500, 2695, key="i_hch")
 
     with st.expander("🛠 적재 로직", expanded=True):
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
