@@ -34,12 +34,13 @@ st.markdown(f"""
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }}
     
-    .logo-container {{
+    /* 로고를 감싸는 영역 */
+    .logo-wrapper {{
         background-color: white;
-        padding: 15px 30px;
-        border-radius: 8px;
+        padding: 20px 40px;
+        border-radius: 10px;
         margin-bottom: 20px;
-        display: inline-block;
+        box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
     }}
     
     /* 카드 및 메트릭 스타일 */
@@ -66,6 +67,7 @@ st.markdown(f"""
     .stButton>button:hover {{
         background-color: {ACCENT_COLOR};
         color: white;
+        border-color: {ACCENT_COLOR};
     }}
     
     div[data-testid="stTable"] {{ font-size: 12px !important; }}
@@ -77,18 +79,19 @@ st.markdown(f"""
 logo_path = "칼트로지스로고.png"
 
 with st.container():
-    # 로고를 감싸는 흰색 박스 디자인
     st.markdown('<div class="header-container">', unsafe_allow_html=True)
     
+    # 로고 표시 영역
+    st.markdown('<div class="logo-wrapper">', unsafe_allow_html=True)
     if os.path.exists(logo_path):
-        st.image(logo_path, width=300)
+        st.image(logo_path, width=320)
     else:
-        # 로고 파일이 없을 경우 표시될 텍스트 로고
-        st.markdown(f'<div class="logo-container"><h1 style="color:{MAIN_COLOR}; margin:0; letter-spacing:-1px;">CALT-LOGIS</h1></div>', unsafe_allow_html=True)
+        st.markdown(f'<h1 style="color:{MAIN_COLOR}; margin:0; font-size:40px;">CALT-LOGIS</h1>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown(f"""
-        <div style="font-size: 24px; font-weight: 700; margin-top:10px;">CONTAINER LOADING PLAN SYSTEM</div>
-        <div style="font-size: 14px; opacity: 0.8; margin-top:5px;">Busan New Port Center | Logistics Management Excellence</div>
+        <div style="font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">CONTAINER LOADING PLAN SYSTEM</div>
+        <div style="font-size: 15px; opacity: 0.8; margin-top:8px;">Busan New Port Center | Smart Logistics Innovation</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -122,7 +125,7 @@ with st.sidebar:
         st.rerun()
     
     st.markdown("---")
-    st.caption("v2.1 | 칼트로지스 부산 신항 센터 전용")
+    st.caption("v2.2 | 칼트로지스 부산 신항 센터 전용")
 
 # --- 3. 적재 알고리즘 ---
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
@@ -155,9 +158,13 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
         is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
         is_fv = is_ol or (is_ow and is_oh)
         tags = []
-        if is_fv: tags.append("FV")
+        if is_fv: 
+            tags.append("FV")
         else:
-            if is_oh: tags.append("OH"); if is_ow: tags.append("OW"); if is_ol: tags.append("OL")
+            if is_oh: tags.append("OH")
+            if is_ow: tags.append("OW")
+            if is_ol: tags.append("OL")
+            
         if b['type'] == "FR":
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}" if tags else f"{base} #{b['id']}"
