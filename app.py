@@ -31,7 +31,7 @@ st.markdown(f"""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
     
-    /* 💡 추가: 파일 업로드(드래그 앤 드롭) 영역 시각적 강조 */
+    /* 파일 업로드(드래그 앤 드롭) 영역 시각적 강조 */
     [data-testid="stFileUploadDropzone"] {{
         border: 2px dashed {MAIN_COLOR};
         background-color: #eaf1fb;
@@ -213,9 +213,16 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
 
 # --- 3. 메인 화면 로직 ---
 
-# 💡 수정: 파일 업로더 문구를 더 직관적으로 변경
+# 💡 핵심 수정: 파일이 변경될 때 이전 데이터를 메모리에서 삭제하는 함수
+def reset_data():
+    if 'bins' in st.session_state:
+        del st.session_state['bins']
+    if 'manual_mode' in st.session_state:
+        del st.session_state['manual_mode']
+
 st.markdown("### 📤 패킹리스트 엑셀 업로드")
-file = st.file_uploader("이곳에 엑셀(.xlsx) 또는 CSV 파일을 드래그 앤 드롭하세요.", type=['csv', 'xlsx'])
+# 💡 핵심 수정: on_change=reset_data 추가 (새 파일이 올라오면 기존 데이터 싹 지움)
+file = st.file_uploader("이곳에 엑셀(.xlsx) 또는 CSV 파일을 드래그 앤 드롭하세요.", type=['csv', 'xlsx'], on_change=reset_data)
 
 if file is not None:
     try:
