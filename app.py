@@ -147,22 +147,22 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
             b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
             b['groups'].add(piece['GROUP']); placed = True
 
-def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
+def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
     for b in bins:
         is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
-        is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
-        is_fv = is_ol or (is_ow and is_oh)
+        is_ow = b['max_W'] > 2350
+        is_oh = b['max_H'] > max_hc_h
+        is_ol = b['used_L'] > fr_max_len
+        
         tags = []
-        if is_fv: 
-            tags.append("FV")
-        else:
-            if is_oh: tags.append("OH")
-            if is_ow: tags.append("OW")
-            if is_ol: tags.append("OL")
+        if is_oh: tags.append("OH")
+        if is_ow: tags.append("OW")
+        if is_ol: tags.append("OL")
             
-        if b['type'] == "FR":
+        # 💡 동적 태깅: 컨테이너에 들어간 화물 중 하나라도 초과가 있으면 FR로 판정!
+        if tags:
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
-            b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}" if tags else f"{base} #{b['id']}"
+            b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
             if b['max_H'] > max_dry_h: base = "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
@@ -171,44 +171,52 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
 
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing):
     all_pieces = []
-    fr_max_len = max_40_len - 430
     for _, row in df.iterrows():
         l, w, h, weight = int(row['L'] + 0.5), int(row['W'] + 0.5), int(row['H'] + 0.5), int(row['WEIGHT'] + 0.5)
         if max(l, w) <= 2350: el, ew = min(l, w), max(l, w)
         else: el, ew = max(l, w), min(l, w)
-        req = "FR" if ew > 2350 or el > fr_max_len or h > max_hc_h else "DRY"
-        all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight, 'REQ_TYPE': req})
+        all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight})
     
-    # 정렬 우선순위: 폭 넓은것 -> 높이 높은것 -> 길이 긴것 -> 그룹 순
-    all_pieces.sort(key=lambda x: (x['REQ_TYPE'], -x['W'], -x['H'], -x['L'], x['GROUP']))
+    # 💡 핵심 로직 변경: 
+    # 1. DRY와 FR을 억지로 떼어놓지 않고 하나로 합칩니다.
+    # 2. 크기가 무식하게 큰 놈(폭 -> 높이 -> 길이)부터 무조건 1순위로 줄을 세웁니다.
+    all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
     
     bins = []; c_no = 1
-    req_types = sorted(list(set(p['REQ_TYPE'] for p in all_pieces)))
-    for r_type in req_types:
-        r_pieces = [p for p in all_pieces if p['REQ_TYPE'] == r_type]
-        type_bins = []
-        if use_balancing:
-            total_l, total_w = sum(p['L'] for p in r_pieces), sum(p['WEIGHT'] for p in r_pieces)
-            est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
-            for _ in range(est_bins):
-                type_bins.append({'id': c_no, 'type': r_type, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
-                c_no += 1
-        for piece in r_pieces:
-            placed = False
-            if use_balancing: type_bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
-            for b in (type_bins if use_balancing else bins):
-                if not use_balancing and b['type'] != piece['REQ_TYPE']: continue
-                pack_items_into_bin([piece], b, max_40_wt, max_40_len)
-                if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']): placed = True; break
-            if not placed:
-                new_bin = {'id': c_no, 'type': piece['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
-                if use_balancing: type_bins.append(new_bin)
-                else: bins.append(new_bin)
-                c_no += 1
-        if use_balancing: bins.extend([b for b in type_bins if b['used_L'] > 0])
+    
+    if use_balancing:
+        total_l, total_w = sum(p['L'] for p in all_pieces), sum(p['WEIGHT'] for p in all_pieces)
+        est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
+        for _ in range(est_bins):
+            bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
+            c_no += 1
+            
+    for piece in all_pieces:
+        placed = False
+        if use_balancing: 
+            bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
+            
+        for b in bins:
+            pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+            if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']): 
+                placed = True
+                break
+                
+        if not placed:
+            new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+            pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
+            bins.append(new_bin)
+            c_no += 1
+            
+    # 빈 공간만 덩그러니 남은 컨테이너는 삭제 처리
+    bins = [b for b in bins if b['used_L'] > 0 or b.get('stacked_items')]
+    
+    # 컨테이너 번호(id) 다시 예쁘게 정렬
     bins.sort(key=lambda x: x['id'])
-    return apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h)
+    for idx, b in enumerate(bins):
+        b['id'] = idx + 1
+        
+    return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
 
 # --- 3. 메인 화면 로직 ---
 def reset_data():
@@ -297,9 +305,9 @@ if file is not None:
                                 new_alloc.append((item, target))
                         new_bins_dict = {}
                         for item, t_id in new_alloc:
-                            if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'type': item['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                            if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
-                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h)
+                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h, max_hc_h)
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 4대 제원 확인", expanded=False):
@@ -311,7 +319,6 @@ if file is not None:
                     max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
                     used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
                     
-                    # 💡 핵심 수정: 폭과 높이도 기본 수치와 진행바를 항상 유지하고, 초과 시 옆에 빨간 글씨만 추가
                     c1, c2, c3, c4 = st.columns(4)
                     c1.markdown(f"**📏 길이:** {b['used_L']:,} / {cur_max_l:,} mm")
                     c1.progress(min(1.0, b['used_L']/cur_max_l))
