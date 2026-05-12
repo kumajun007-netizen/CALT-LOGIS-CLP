@@ -8,7 +8,7 @@ import io
 # --- 1. 화면 스타일 및 테마 설정 ---
 st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
 
-# 칼트로지스 공식 컬러 가이드 적용 (Deep Navy & Soft Gray)
+# 칼트로지스 공식 컬러 가이드 적용
 MAIN_COLOR = "#001f3f"
 SUB_COLOR = "#f0f2f6"
 ACCENT_COLOR = "#007bff"
@@ -21,7 +21,7 @@ st.markdown(f"""
     
     .main {{ background-color: #f8f9fa; }}
     
-    /* 상단 타이틀 바 (가운데 정렬로 수정) */
+    /* 상단 타이틀 바 */
     .header-container {{
         background-color: {MAIN_COLOR};
         padding: 25px;
@@ -66,7 +66,7 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 상단 헤더 영역 (로고 삭제 및 타이틀 가운데 정렬) ---
+# --- 상단 헤더 영역 ---
 with st.container():
     st.markdown(f"""
         <div class="header-container">
@@ -81,7 +81,7 @@ def clean_num(val):
         return float(str(val).replace(',', '').strip())
     except: return None
 
-# --- 2. 사이드바: 설정 영역 (로고 유지) ---
+# --- 2. 사이드바: 설정 영역 ---
 with st.sidebar:
     logo_path_sidebar = "칼트로지스로고.png"
     if os.path.exists(logo_path_sidebar):
@@ -226,64 +226,69 @@ if file is not None:
 
         st.markdown("---")
 
-        # --- 컨테이너별 상세 정보 ---
+        # --- 컨테이너별 상세 정보 (상하 배치로 수정) ---
         for b in bins:
             if b['used_L'] == 0 and not b.get('stacked_items'): continue
             
-            with st.container():
-                st.markdown(f"### 📦 {b['c_label']}")
-                c_info1, c_info2 = st.columns([2, 1])
+            with st.expander(f"📦 {b['c_label']}", expanded=True):
                 
-                with c_info1:
-                    t_data = []
-                    for r in b['rows']:
-                        for item in r['items']: t_data.append({**item, '상태': '바닥', '이동': f"{b['id']}번"})
-                    for s in b.get('stacked_items', []): t_data.append({**s, '상태': '단적', '이동': f"{b['id']}번"})
-                    
-                    df_edit = pd.DataFrame(t_data)[['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT', '이동']]
-                    edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
-                                            column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
-                                            disabled=['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT'])
-                    
-                    if st.button(f"🚀 {b['id']}번 컨테이너 변경사항 적용", key=f"btn_{b['id']}"):
-                        moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
-                        if moves:
-                            new_alloc = []
-                            max_id = max([bx['id'] for bx in st.session_state.bins])
-                            for bx in st.session_state.bins:
-                                for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
-                                    target = bx['id']
-                                    for m_pkg, m_tgt in moves:
-                                        if str(item['PKG NO']) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
-                                    new_alloc.append((item, target))
-                            new_bins_dict = {}
-                            for item, t_id in new_alloc:
-                                if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'type': item['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                                pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
-                            st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h)
-                            st.rerun()
-
-                with c_info2:
-                    st.markdown(f"**길이 점유:** {b['used_L']:,} / {max_40_len if '40ft' in b['c_label'] else max_20_len:,} mm")
-                    st.progress(min(1.0, b['used_L']/(max_40_len if '40ft' in b['c_label'] else max_20_len)))
-                    st.markdown(f"**중량 점유:** {b['total_W']:,} / {max_40_wt if '40ft' in b['c_label'] else max_20_wt:,} kg")
-                    st.progress(min(1.0, b['total_W']/(max_40_wt if '40ft' in b['c_label'] else max_20_wt)))
-                    
-                    # 도면 시각화
-                    d_len = max_20_len if "20ft" in b['c_label'] else max_40_len
-                    fig = go.Figure()
-                    fig.add_shape(type="rect", x0=0, y0=0, x1=d_len, y1=2350, line=dict(color=MAIN_COLOR, width=2))
-                    cx = 0
-                    for r in b['rows']:
-                        cy = (2350 - r['used_W']) / 2
-                        for item in r['items']:
-                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
-                            cy += item['W']
-                        cx += r['max_L'] + 50
-                    fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=180, margin=dict(l=5,r=5,t=5,b=5), paper_bgcolor="rgba(0,0,0,0)")
-                    
-                    # 💡 오류 수정 부분: 각 도면마다 고유한 key 값을 부여했습니다.
-                    st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
+                # 1. 상단: 점유율 게이지 및 도면 (넓게 보기)
+                cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
+                cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
+                
+                col_gauge1, col_gauge2 = st.columns(2)
+                with col_gauge1:
+                    st.markdown(f"**📏 길이 점유:** {b['used_L']:,} / {cur_max_l:,} mm")
+                    st.progress(min(1.0, b['used_L']/cur_max_l))
+                with col_gauge2:
+                    st.markdown(f"**⚖️ 중량 점유:** {b['total_W']:,} / {cur_max_w:,} kg")
+                    st.progress(min(1.0, b['total_W']/cur_max_w))
+                
+                # 도면 시각화 (가로 폭 전체 사용)
+                fig = go.Figure()
+                fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
+                cx = 0
+                for r in b['rows']:
+                    cy = (2350 - r['used_W']) / 2
+                    for item in r['items']:
+                        fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
+                        fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
+                        cy += item['W']
+                    cx += r['max_L'] + 50
+                fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=220, margin=dict(l=10,r=10,t=15,b=10), paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
+                
+                st.markdown("---") # 시각화와 표 사이의 구분선
+                
+                # 2. 하단: 화물 상세 표 및 이동 버튼
+                st.markdown("**📋 적재 화물 목록 및 위치 변경**")
+                t_data = []
+                for r in b['rows']:
+                    for item in r['items']: t_data.append({**item, '위치': 'Bottom(바닥)', '이동': f"{b['id']}번"})
+                for s in b.get('stacked_items', []): t_data.append({**s, '위치': 'Top(단적)', '이동': f"{b['id']}번"})
+                
+                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT', '이동']]
+                edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
+                                        column_config={"이동": st.column_config.SelectboxColumn("🚚 이동(클릭)", options=target_options)},
+                                        disabled=['위치', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT'])
+                
+                if st.button(f"🚀 {b['id']}번 컨테이너 변경사항 적용", key=f"btn_{b['id']}"):
+                    moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
+                    if moves:
+                        new_alloc = []
+                        max_id = max([bx['id'] for bx in st.session_state.bins])
+                        for bx in st.session_state.bins:
+                            for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
+                                target = bx['id']
+                                for m_pkg, m_tgt in moves:
+                                    if str(item['PKG NO']) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
+                                new_alloc.append((item, target))
+                        new_bins_dict = {}
+                        for item, t_id in new_alloc:
+                            if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'type': item['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                            pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
+                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h)
+                        st.rerun()
 
         # --- 데이터 다운로드 ---
         mapping = {}
