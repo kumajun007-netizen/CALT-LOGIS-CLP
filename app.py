@@ -31,7 +31,7 @@ st.markdown(f"""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
     
-    .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
+    /* 💡 수정 1: 흰색 빈 박스를 만들던 불필요한 내부 캐시 클래스(CSS)를 완벽히 제거했습니다. */
     
     /* 메트릭 박스 높이 완벽 고정 */
     [data-testid="stMetric"] {{
@@ -40,7 +40,7 @@ st.markdown(f"""
         border-radius: 10px;
         border-left: 5px solid {MAIN_COLOR};
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        height: 100%; /* 높이 균일화 */
+        height: 100%;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -224,18 +224,19 @@ if file is not None:
         bins = st.session_state.bins
         target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
-        # --- 💡 수정 1: 대시보드 요약 지표 (높이 통일 및 크로스체크 명시) ---
-        st.subheader("📊 실시간 적재 요약 (무결성 검증)")
+        # --- 💡 수정 2: (무결성 검증) 글자 삭제 ---
+        st.subheader("📊 실시간 적재 요약")
         m1, m2, m3, m4 = st.columns(4)
         packed_qty = sum([len(r['items']) for b in bins for r in b['rows']]) + sum([len(b.get('stacked_items', [])) for b in bins])
         
-        # 델타 값(↑0 등)을 제거하여 4개 박스 높이를 완벽하게 동일하게 맞춤
         m1.metric("총 화물 수량", f"{len(df)} PKG")
         m2.metric("배정 완료 수량", f"{packed_qty} PKG") 
         m3.metric("필요 컨테이너", f"{len(bins)} UNIT")
         m4.metric("평균 중량 효율", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg/UNIT")
 
-        st.markdown("---")
+        # 💡 수정 3: 박스 사이의 가로줄(st.markdown("---")) 삭제하여 깔끔하게 연결
+
+        st.markdown("<br>", unsafe_allow_html=True) # 약간의 간격만 줌
 
         # --- 컨테이너별 상세 정보 ---
         for b in bins:
