@@ -103,7 +103,14 @@ with st.sidebar:
             <tr><td>NET WEIGHT</td><td>I 열</td><td>선택</td></tr>
             <tr><td>ITEM</td><td>D 열</td><td>참고</td></tr>
             <tr><td>DESCRIPTION</td><td>E 열</td><td>참고</td></tr>
+            <tr><td>REMARK</td><td>O 열</td><td>선택</td></tr>
         </table>
+        <div style='font-size:10px; color:#555; margin-top:8px; line-height:1.6;'>
+            <b>REMARK 키워드</b><br>
+            · <b>BOX</b> : Q'ty = 실제 박스 수 (동일 화물 복제)<br>
+            · <b>2단 / 3단</b> : 해당 화물 다단 적재 허용<br>
+            · 복합 예시 : <code>BOX,2단</code>
+        </div>
         <p style='font-size:11px; color:gray; margin-top:10px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>
         """, unsafe_allow_html=True)
         st.markdown("---")
@@ -121,7 +128,8 @@ with st.sidebar:
             "X1": ["X"],
             "Dimension W (mm)": [1000],
             "X2": ["X"],
-            "Dimension H (mm)": [2300]
+            "Dimension H (mm)": [2300],
+            "REMARK": [""]
         }
         df_template = pd.DataFrame(template_data)
         tow = io.BytesIO()
@@ -156,10 +164,20 @@ with st.sidebar:
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
     for piece in pieces:
         placed = False
-        if allow_stacking and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
-            if 'stacked_items' not in b: b['stacked_items'] = []
-            b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']; b['groups'].add(piece['GROUP']); placed = True
-            continue
+        # REMARK 다단 지시(2단/3단) 또는 전역 다단 옵션 ON 시 적재 시도
+        # MAX_STK: REMARK에서 지정한 최대 단수 (기본 1)
+        max_stk = piece.get('MAX_STK', 1)
+        can_stack = (allow_stacking and piece['STACK_OK']) or max_stk > 1
+        if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+            # 동일 PKG 그룹에서 현재 단수 확인
+            stacked = b.get('stacked_items', [])
+            same = [s for s in stacked if s['L'] == piece['L'] and s['W'] == piece['W'] and s['H'] == piece['H']]
+            cur_stk = len(same) + 1  # 바닥 1단 포함
+            if cur_stk <= max_stk:
+                if 'stacked_items' not in b: b['stacked_items'] = []
+                b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
+                b['groups'].add(piece['GROUP']); placed = True
+                continue
         row_found = False
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
@@ -357,30 +375,42 @@ if file is not None:
         for i in range(len(raw_process)):
             row = raw_process.iloc[i]
 
-            # 열 고정 매핑: B=1, D=3, E=4, H=7(NetWt), J=9(L), L=11(W), N=13(H)
-            pkg_v = str(row[1]).replace('00:00:00', '').replace('.0', '').strip() if pd.notna(row[1]) else None
-            l_v = clean_num(row[9])       # J열: LENGTH
-            w_v = clean_num(row[11])      # L열: WIDTH
-            h_v = clean_num(row[13])      # N열: HEIGHT
-            weight_v = clean_num(row[8])  # I열: GROSS WEIGHT
+            # 열 고정 매핑: B=1, D=3, E=4, F=5(Q'ty), I=8(GrossWt), J=9(L), L=11(W), N=13(H), O=14(REMARK)
+            pkg_v    = str(row[1]).replace('00:00:00', '').replace('.0', '').strip() if pd.notna(row[1]) else None
+            qty_v    = int(clean_num(row[5])) if clean_num(row[5]) > 0 else 1  # F열: Q'ty
+            l_v      = clean_num(row[9])   # J열: LENGTH
+            w_v      = clean_num(row[11])  # L열: WIDTH
+            h_v      = clean_num(row[13])  # N열: HEIGHT
+            weight_v = clean_num(row[8])   # I열: GROSS WEIGHT
+
+            # O열: REMARK (열이 없으면 빈 문자열)
+            remark_raw = str(row[14]).strip().upper() if (len(row) > 14 and pd.notna(row[14])) else ""
+            remark_keys = [k.strip() for k in remark_raw.replace('，', ',').split(',')]
+
+            is_box   = 'BOX' in remark_keys          # Q'ty = 실제 박스 수
+            max_stk  = 3 if '3단' in remark_keys else (2 if '2단' in remark_keys else 1)
+            stack_ok = max_stk > 1
 
             # PKG NO와 치수(LWH)만 필수값으로 체크
             if not pkg_v or pkg_v.lower() in ['nan', 'none', '.', ''] or l_v == 0 or w_v == 0 or h_v == 0:
                 continue
 
-            p_data.append({
-                'PKG NO': pkg_v,
-                'GROUP': str(row[4]) if pd.notna(row[4]) else "-",   # E열: Description (그룹핑 기준)
-                'ITEM': str(row[3]) if pd.notna(row[3]) else "-",    # D열: ITEM
-                'DESC': str(row[4]) if pd.notna(row[4]) else "-",    # E열: Description
-                'L': l_v,
-                'W': w_v,
-                'H': h_v,
-                'WEIGHT': weight_v,
-                'STACK_OK': False,
-                # 원본 엑셀 행 위치 보존 (다운로드 시 결과 기입용)
-                'row_idx': int(row['orig_idx'])
-            })
+            repeat = qty_v if is_box else 1
+            for seq in range(repeat):
+                suffix = f"-{seq+1:03d}" if repeat > 1 else ""
+                p_data.append({
+                    'PKG NO'  : f"{pkg_v}{suffix}",
+                    'GROUP'   : str(row[4]) if pd.notna(row[4]) else "-",
+                    'ITEM'    : str(row[3]) if pd.notna(row[3]) else "-",
+                    'DESC'    : str(row[4]) if pd.notna(row[4]) else "-",
+                    'L'       : l_v,
+                    'W'       : w_v,
+                    'H'       : h_v,
+                    'WEIGHT'  : weight_v,
+                    'STACK_OK': stack_ok,
+                    'MAX_STK' : max_stk,
+                    'row_idx' : int(row['orig_idx'])
+                })
 
         df = pd.DataFrame(p_data)
         if df.empty:
