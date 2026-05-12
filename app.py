@@ -89,6 +89,7 @@ with st.sidebar:
     if os.path.exists(logo_path):
         st.image(logo_path, use_column_width=True)
 
+    # 💡 수정: GROUP/ITEM을 통합하고 DESCRIPTION 위치를 F열(5)로 변경
     with st.expander("📄 엑셀 업로드 표준 규격 (열 확인)", expanded=True):
         st.markdown(f"""
         <table class="guide-table">
@@ -98,9 +99,8 @@ with st.sidebar:
             <tr class="essential"><td>LENGTH (L)</td><td>K (10)</td><td>[필수]</td></tr>
             <tr class="essential"><td>WIDTH (W)</td><td>M (12)</td><td>[필수]</td></tr>
             <tr class="essential"><td>HEIGHT (H)</td><td>O (14)</td><td>[필수]</td></tr>
-            <tr><td>GROUP</td><td>E (4)</td><td>참고</td></tr>
-            <tr><td>ITEM</td><td>F (5)</td><td>참고</td></tr>
-            <tr><td>DESCRIPTION</td><td>G (6)</td><td>참고</td></tr>
+            <tr><td>GROUP / ITEM</td><td>E (4)</td><td>참고</td></tr>
+            <tr><td>DESCRIPTION</td><td>F (5)</td><td>참고</td></tr>
         </table>
         <p style='font-size:11px; color:gray; margin-top:10px;'>* 필수 항목이 누락된 행은 자동 제외됩니다.</p>
         """, unsafe_allow_html=True)
@@ -154,8 +154,6 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
         is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
         is_fv = is_ol or (is_ow and is_oh)
         tags = []
-        
-        # 💡 에러 발생 원인이었던 부분을 올바르게 여러 줄로 풀었습니다.
         if is_fv: 
             tags.append("FV")
         else:
@@ -236,11 +234,15 @@ if file is not None:
             if any(v is None for v in [pkg_v, weight_v, l_v, w_v, h_v]) or pkg_v in ['nan', '.', '']:
                 continue
             
+            # 💡 수정: E열(row[4])을 GROUP과 ITEM으로 공통 사용, F열(row[5])을 DESC로 사용
+            val_group_item = str(row[4]).strip() if pd.notna(row[4]) else "-"
+            val_desc = str(row[5]).strip() if pd.notna(row[5]) else "-"
+
             p_data.append({
                 'PKG NO': pkg_v, 
-                'GROUP': str(row[4]) if pd.notna(row[4]) else "-", 
-                'ITEM': str(row[5]) if pd.notna(row[5]) else "-", 
-                'DESC': str(row[6]) if pd.notna(row[6]) else "-", 
+                'GROUP': val_group_item, 
+                'ITEM': val_group_item, 
+                'DESC': val_desc, 
                 'L': l_v, 'W': w_v, 'H': h_v, 'WEIGHT': weight_v, 
                 'STACK_OK': s_ok, 'row_idx': i+4
             })
@@ -249,6 +251,9 @@ if file is not None:
         if df.empty:
             st.warning("⚠️ 필수 항목이 모두 채워진 화물 데이터가 없습니다. 엑셀 열 번호를 확인하세요.")
         else:
+            # 💡 기존 로직 유지 (TOTAL 문구가 포함된 행은 제외)
+            df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
+
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
                 st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing)
                 st.session_state.manual_mode = True
@@ -268,16 +273,17 @@ if file is not None:
                 if b['used_L'] == 0 and not b.get('stacked_items'): continue
                 st.markdown(f'<div class="container-box">', unsafe_allow_html=True)
                 st.markdown(f"### 📦 {b['c_label']}")
-                st.markdown("**📋 적재 화물 목록 (필수 정보 위주)**")
+                st.markdown("**📋 적재 화물 목록 (필수 정보 및 참조)**")
                 t_data = []
                 for r in b['rows']:
                     for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
                 for s in b.get('stacked_items', []): t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번"})
                 
-                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'L', 'W', 'WEIGHT', 'ITEM', '이동']]
+                # 💡 수정: 화면 표에 ITEM(Group과 동일)과 DESC 항목을 보여주도록 구성
+                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'WEIGHT', '이동']]
                 edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
                                         column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
-                                        disabled=['위치', 'PKG NO', 'L', 'W', 'WEIGHT', 'ITEM'])
+                                        disabled=['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'WEIGHT'])
                 
                 if st.button(f"🚀 {b['id']}번 변경사항 적용", key=f"btn_{b['id']}"):
                     moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
