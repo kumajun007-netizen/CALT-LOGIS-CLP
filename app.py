@@ -226,13 +226,13 @@ if file is not None:
 
         st.markdown("---")
 
-        # --- 컨테이너별 상세 정보 (상하 배치로 수정) ---
+        # --- 컨테이너별 상세 정보 ---
         for b in bins:
             if b['used_L'] == 0 and not b.get('stacked_items'): continue
             
-            with st.expander(f"📦 {b['c_label']}", expanded=True):
+            # 💡 수정 1: 컨테이너 세부정보 창을 기본으로 접힌 상태(expanded=False)로 변경
+            with st.expander(f"📦 {b['c_label']}", expanded=False):
                 
-                # 1. 상단: 점유율 게이지 및 도면 (넓게 보기)
                 cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                 cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
                 
@@ -244,7 +244,7 @@ if file is not None:
                     st.markdown(f"**⚖️ 중량 점유:** {b['total_W']:,} / {cur_max_w:,} kg")
                     st.progress(min(1.0, b['total_W']/cur_max_w))
                 
-                # 도면 시각화 (가로 폭 전체 사용)
+                # 도면 시각화
                 fig = go.Figure()
                 fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
                 cx = 0
@@ -255,12 +255,20 @@ if file is not None:
                         fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
                         cy += item['W']
                     cx += r['max_L'] + 50
-                fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=220, margin=dict(l=10,r=10,t=15,b=10), paper_bgcolor="rgba(0,0,0,0)")
+                
+                # 💡 수정 2: x, y 축 range를 고정값으로 설정하여 자동 확대(잘림 현상) 방지
+                fig.update_layout(
+                    xaxis=dict(visible=False, range=[-200, cur_max_l + 200]), 
+                    yaxis=dict(visible=False, range=[-200, 2550]), 
+                    height=220, 
+                    margin=dict(l=10, r=10, t=15, b=10), 
+                    paper_bgcolor="rgba(0,0,0,0)"
+                )
                 st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                 
-                st.markdown("---") # 시각화와 표 사이의 구분선
+                st.markdown("---")
                 
-                # 2. 하단: 화물 상세 표 및 이동 버튼
+                # 하단: 화물 표
                 st.markdown("**📋 적재 화물 목록 및 위치 변경**")
                 t_data = []
                 for r in b['rows']:
