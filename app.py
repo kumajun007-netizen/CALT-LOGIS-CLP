@@ -565,7 +565,7 @@ if file is not None:
             for bx in bins:
                 for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
                     row_container_cnt[item['row_idx']][bx['c_label']] += 1
-                    row_detail_list[item['row_idx']].append((item['PKG NO'], bx['c_label']))
+                    row_detail_list[item['row_idx']].append((item['PKG NO'], bx['c_label'], item['L'], item['W'], item['H'], item['WEIGHT']))
 
             mapping = {}
             for row_idx, counter in row_container_cnt.items():
@@ -616,19 +616,23 @@ if file is not None:
                 ws.column_dimensions[target_letter].width = 30
 
                 # ── BOX 화물이 있으면 "배정상세" 시트 추가
-                box_details = [(pkg, c_label)
+                box_details = [(pkg, c_label, item_l, item_w, item_h, item_wt)
                                for row_idx, details in row_detail_list.items()
                                if len(details) > 1
-                               for pkg, c_label in details]
+                               for pkg, c_label, item_l, item_w, item_h, item_wt in details]
                 if box_details:
                     if "배정상세" in wb.sheetnames:
                         del wb["배정상세"]
                     ws_d = wb.create_sheet("배정상세")
-                    ws_d.append(["PKG NO", "배정 컨테이너"])
+                    ws_d.append(["PKG NO", "L (mm)", "W (mm)", "H (mm)", "WEIGHT (kg)", "배정 컨테이너"])
                     ws_d.column_dimensions["A"].width = 20
-                    ws_d.column_dimensions["B"].width = 30
-                    for pkg, c_label in box_details:
-                        ws_d.append([pkg, c_label])
+                    ws_d.column_dimensions["B"].width = 10
+                    ws_d.column_dimensions["C"].width = 10
+                    ws_d.column_dimensions["D"].width = 10
+                    ws_d.column_dimensions["E"].width = 14
+                    ws_d.column_dimensions["F"].width = 30
+                    for pkg, c_label, l, w, h, wt in box_details:
+                        ws_d.append([pkg, l, w, h, wt, c_label])
 
                 output = io.BytesIO()
                 wb.save(output)
