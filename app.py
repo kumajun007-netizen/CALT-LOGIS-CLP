@@ -148,7 +148,6 @@ with st.sidebar:
         max_hc_h = st.number_input("HC 높이 (mm)", 2000, 3500, 2695)
 
     with st.expander("🛠 적재 로직", expanded=True):
-        use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=False)
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
     
     if st.button("🔄 AI 재계산 실행"):
@@ -195,7 +194,7 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
-def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing):
+def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h):
     # ── Step 1: 치수 정규화
     raw_pieces = []
     for _, row in df.iterrows():
@@ -245,23 +244,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             return [], c_no_start
         c_no = c_no_start
         group_bins = []
-        if use_balancing:
-            from collections import Counter
-            real_total_l = 0
-            for (el, ew), cnt in Counter((p['L'], p['W']) for p in pieces).items():
-                slots = max(1, int(2350 // ew))
-                rows  = math.ceil(cnt / slots)
-                real_total_l += rows * el
-            total_w = sum(p['WEIGHT'] for p in pieces)
-            est = max(1, math.ceil(real_total_l / max_40_len), math.ceil(total_w / max_40_wt))
-            for _ in range(est):
-                group_bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
-                                   'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
-                c_no += 1
         for piece in pieces:
             placed = False
-            if use_balancing:
-                group_bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
             for b in group_bins:
                 pack_items_into_bin([piece], b, max_40_wt, max_40_len)
                 if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
@@ -404,7 +388,7 @@ if file is not None:
             st.warning("⚠️ 지정된 열(B, J, L, N)에서 필수 데이터를 찾을 수 없습니다. 양식을 확인하세요.")
         else:
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
-                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing)
+                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h)
                 st.session_state.manual_mode = True
 
             bins = st.session_state.bins
