@@ -92,7 +92,7 @@ with st.sidebar:
         st.image(logo_path, use_column_width=True)
 
     # 💡 수정: 최신 양식(B, I, J, L, N) 기준 열 안내
-    with st.expander("📄 엑셀 업로드 표준 규격 (열 고정)", expanded=True):
+    with st.expander("📄 엑셀 업로드 표준 규격", expanded=True):
         st.markdown(f"""
         <table class="guide-table">
             <tr><th>항목</th><th>엑셀 열</th><th>구분</th></tr>
