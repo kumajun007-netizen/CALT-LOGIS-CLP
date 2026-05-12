@@ -83,7 +83,6 @@ def clean_num(val):
 
 # --- 2. 사이드바: 설정 영역 (로고 유지) ---
 with st.sidebar:
-    # 요청하신 사이드바 로고는 그대로 유지됩니다.
     logo_path_sidebar = "칼트로지스로고.png"
     if os.path.exists(logo_path_sidebar):
         st.image(logo_path_sidebar, use_column_width=True)
@@ -282,7 +281,9 @@ if file is not None:
                             cy += item['W']
                         cx += r['max_L'] + 50
                     fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=180, margin=dict(l=5,r=5,t=5,b=5), paper_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 💡 오류 수정 부분: 각 도면마다 고유한 key 값을 부여했습니다.
+                    st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
 
         # --- 데이터 다운로드 ---
         mapping = {}
