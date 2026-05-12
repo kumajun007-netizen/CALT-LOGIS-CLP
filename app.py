@@ -153,6 +153,16 @@ with st.sidebar:
         max_40_len = st.number_input("최대 길이 (mm)",  11000, 13000, 11900, key="i_40len")
         max_dry_h  = st.number_input("DRY 내부 높이 (mm)", 2000, 3000, 2370, key="i_dryh")
         max_hc_h   = st.number_input("HC 내부 높이 (mm)",  2000, 3500, 2670, key="i_hch")
+        st.markdown("---")
+        st.markdown("**🔴 20ft FR (Flat Rack)**")
+        max_fr20_wt  = st.number_input("최대 중량 (kg)",  10000, 40000, 25000, key="i_fr20wt")
+        max_fr20_len = st.number_input("최대 길이 (mm)",  4000,  7000,  5600,  key="i_fr20len")
+        max_fr_h     = st.number_input("내부 높이 (mm)",  1000,  3000,  2260,  key="i_frh")
+        max_fr_w     = st.number_input("기둥간 폭 (mm)",  1000,  3000,  2080,  key="i_frw")
+        st.markdown("---")
+        st.markdown("**🔴 40ft FR (Flat Rack)**")
+        max_fr40_wt  = st.number_input("최대 중량 (kg)",  10000, 45000, 30000, key="i_fr40wt")
+        max_fr40_len = st.number_input("최대 길이 (mm)",  8000,  14000, 11600, key="i_fr40len")
 
     with st.expander("🛠 적재 로직", expanded=True):
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
@@ -197,16 +207,17 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
             b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
             b['groups'].add(piece['GROUP']); placed = True
 
-def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h):
+def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt):
     for b in bins:
-        is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
+        is_20ft_size  = b['used_L'] <= max_20_len  and b['total_W'] <= max_20_wt
+        is_20fr_size  = b['used_L'] <= max_fr20_len and b['total_W'] <= max_fr20_wt
         is_ow = b['max_W'] > 2340
         is_oh = b['max_H'] > max_hc_h
         tags = []
         if is_oh: tags.append("OH")
         if is_ow: tags.append("OW")
         if tags:
-            base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
+            base = "20ft Flat Rack" if is_20fr_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
             if b['max_H'] > max_dry_h: base = "40ft HC"
@@ -259,7 +270,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     hc_pieces  = sorted([p for p in all_pieces if p['W'] <= 2340 and max_dry_h < p['H'] <= max_hc_h], key=sk)
     dry_pieces = sorted([p for p in all_pieces if p['W'] <= 2340 and p['H'] <= max_dry_h], key=sk)
 
-    def _pack_group(pieces, c_no_start):
+    def _pack_group(pieces, c_no_start, p_max_wt=None, p_max_len=None):
+        _wt  = p_max_wt  or max_40_wt
+        _len = p_max_len or max_40_len
         if not pieces:
             return [], c_no_start
         c_no = c_no_start
@@ -267,33 +280,35 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for piece in pieces:
             placed = False
             for b in group_bins:
-                pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+                pack_items_into_bin([piece], b, _wt, _len)
                 if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
                     placed = True; break
             if not placed:
                 new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
                            'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
+                pack_items_into_bin([piece], new_bin, _wt, _len)
                 group_bins.append(new_bin); c_no += 1
         group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
         return group_bins, c_no
 
-    def _fill_gaps(bins, candidates):
+    def _fill_gaps(bins, candidates, p_max_wt=None, p_max_len=None):
         """bin의 남는 L 공간에 candidates를 채워 넣고, 배치된 화물을 제거한 나머지 반환"""
+        _wt  = p_max_wt  or max_40_wt
+        _len = p_max_len or max_40_len
         remaining = list(candidates)
-        for b in sorted(bins, key=lambda x: x['used_L']):  # 덜 찬 bin부터
+        for b in sorted(bins, key=lambda x: x['used_L']):
             for piece in list(remaining):
                 before = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
-                pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+                pack_items_into_bin([piece], b, _wt, _len)
                 after  = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
                 if after > before:
                     remaining.remove(piece)
         return remaining
 
-    # ① FR 화물 배치 → 남는 공간에 HC, Dry 순으로 채우기
-    fr_bins, c_no  = _pack_group(fr_pieces, 1)
-    remaining_hc   = _fill_gaps(fr_bins, hc_pieces)
-    remaining_dry  = _fill_gaps(fr_bins, dry_pieces)
+    # ① FR 화물 배치 (FR 전용 제원 사용) → 남는 공간에 HC, Dry 순으로 채우기
+    fr_bins, c_no  = _pack_group(fr_pieces, 1, p_max_wt=max_fr40_wt, p_max_len=max_fr40_len)
+    remaining_hc   = _fill_gaps(fr_bins, hc_pieces,  p_max_wt=max_fr40_wt, p_max_len=max_fr40_len)
+    remaining_dry  = _fill_gaps(fr_bins, dry_pieces, p_max_wt=max_fr40_wt, p_max_len=max_fr40_len)
 
     # ② HC 화물 배치 → 남는 공간에 Dry 채우기 → 20ft Dry 활용 극대화
     hc_bins, c_no  = _pack_group(remaining_hc, c_no)
@@ -305,7 +320,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     bins = fr_bins + hc_bins + dry_bins
     for idx, b in enumerate(bins):
         b['id'] = idx + 1
-    return apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h)
+    return apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt)
 
 # --- 3. 메인 화면 로직 ---
 def reset_data():
@@ -463,7 +478,7 @@ if file is not None:
                         for item, t_id in new_alloc:
                             if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
-                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_dry_h, max_hc_h)
+                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt)
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 제원 확인", expanded=False):
