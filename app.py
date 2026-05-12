@@ -104,7 +104,7 @@ with st.sidebar:
             <tr><td>ITEM</td><td>D 열</td><td>참고</td></tr>
             <tr><td>DESCRIPTION</td><td>E 열</td><td>참고</td></tr>
         </table>
-        <p style='font-size:11px; color:gray; margin-top:10px;'>* 데이터는 6번째 줄부터 시작하는 것을 권장합니다.</p>
+        <p style='font-size:11px; color:gray; margin-top:10px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>
         """, unsafe_allow_html=True)
 
     # 💡 신규 추가: 표준 양식 다운로드 기능
