@@ -21,16 +21,15 @@ st.markdown(f"""
     
     .main {{ background-color: #f8f9fa; }}
     
-    /* 상단 타이틀 바 */
+    /* 상단 타이틀 바 (가운데 정렬로 수정) */
     .header-container {{
         background-color: {MAIN_COLOR};
-        padding: 20px;
+        padding: 25px;
         border-radius: 10px;
         color: white;
         margin-bottom: 25px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
     
     /* 카드 스타일 섹션 */
@@ -67,20 +66,14 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 상단 헤더 영역 ---
+# --- 상단 헤더 영역 (로고 삭제 및 타이틀 가운데 정렬) ---
 with st.container():
-    col_logo, col_text = st.columns([1, 4])
-    logo_path = "칼트로지스로고.png"
-    with col_text:
-        st.markdown(f"""
-            <div class="header-container">
-                <div style="font-size: 28px; font-weight: 800; letter-spacing: -1px;">CALT-LOGIS CLP SYSTEM</div>
-                <div style="font-size: 14px; opacity: 0.8;">Busan New Port Center | Logistics Management</div>
-            </div>
-        """, unsafe_allow_html=True)
-    with col_logo:
-        if os.path.exists(logo_path): 
-            st.image(logo_path, width=220)
+    st.markdown(f"""
+        <div class="header-container">
+            <div style="font-size: 30px; font-weight: 800; letter-spacing: -1px;">CALT-LOGIS CLP SYSTEM</div>
+            <div style="font-size: 15px; opacity: 0.8; margin-top: 5px;">Busan New Port Center | Logistics Management</div>
+        </div>
+    """, unsafe_allow_html=True)
 
 def clean_num(val):
     try:
@@ -88,17 +81,14 @@ def clean_num(val):
         return float(str(val).replace(',', '').strip())
     except: return None
 
-# --- 2. 사이드바: 설정 영역 (수정된 디자인 반영) ---
+# --- 2. 사이드바: 설정 영역 (로고 유지) ---
 with st.sidebar:
-    # 💡 [요청 사항 1 반영] 배정 옵션 설정 위에 회사 로고 배치
+    # 요청하신 사이드바 로고는 그대로 유지됩니다.
     logo_path_sidebar = "칼트로지스로고.png"
     if os.path.exists(logo_path_sidebar):
-        # use_column_width=True로 사이드바 너비에 맞춰 크기 조정
         st.image(logo_path_sidebar, use_column_width=True)
 
-    # 💡 [요청 사항 2 반영] st.header() 아래에 있던 수평 분할선(st.markdown("---")) 삭제
     st.header("⚙️ 배정 옵션 설정")
-    # st.markdown("---") # 이 줄을 삭제하여 깔끔한 레이아웃 완성
     
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
         max_40_wt = st.number_input("40ft 중량 (kg)", 20000, 40000, 29500)
@@ -112,7 +102,7 @@ with st.sidebar:
 
     with st.expander("🛠 적재 로직", expanded=True):
         use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=True)
-        allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=True)
+        allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
     
     if st.button("🔄 AI 재계산 실행"):
         st.session_state['manual_mode'] = False
@@ -120,12 +110,11 @@ with st.sidebar:
     st.markdown("---")
     st.info("파일 수정 후 이 버튼을 눌러 설정을 적용하세요.")
 
-# --- 짐 배치 핵심 로직 (기존 로직 유지) ---
+# --- 짐 배치 핵심 로직 ---
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
-    # (코드는 기존uploaded:app.py와 동일하게 유지됩니다)
     for piece in pieces:
         placed = False
-        if piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+        if allow_stacking and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             if 'stacked_items' not in b: b['stacked_items'] = []
             b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']; b['groups'].add(piece['GROUP']); placed = True
             continue
@@ -145,7 +134,6 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
             b['groups'].add(piece['GROUP']); placed = True
 
 def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
-    # (코드는 기존uploaded:app.py와 동일하게 유지됩니다)
     for b in bins:
         is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
         is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
@@ -166,7 +154,6 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
     return bins
 
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, use_balancing):
-    # (코드는 기존uploaded:app.py와 동일하게 유지됩니다)
     all_pieces = []
     fr_max_len = max_40_len - 430
     for _, row in df.iterrows():
@@ -205,8 +192,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     bins.sort(key=lambda x: x['id'])
     return apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h)
 
-# --- 3. 메인 화면 로직 (기존 로직 유지) ---
-# (코드는 기존uploaded:app.py와 동일하게 유지됩니다)
+# --- 3. 메인 화면 로직 ---
 file = st.file_uploader("📂 패킹리스트 엑셀 파일을 업로드하세요", type=['csv', 'xlsx'])
 
 if file is not None:
