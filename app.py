@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import math
 import os
 import io
+from openpyxl import load_workbook
+from copy import copy
 
 # --- 1. 화면 스타일 및 테마 설정 ---
 st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
@@ -234,34 +236,92 @@ file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['cs
 
 if file is not None:
     try:
-        raw_full = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
-        # 헤더 아래 실제 데이터 시작점 (보통 5~6번째 줄) 탐색
-        raw_process = pd.read_excel(file, skiprows=5, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=5, header=None)
-        
+        # --- 엑셀/CSV 원본 읽기 ---
+        # 엑셀의 첫 번째 시트가 비어 있는 경우가 있어, 데이터가 있는 시트를 자동으로 선택합니다.
+        selected_sheet = None
+
+        if file.name.endswith('.xlsx'):
+            file.seek(0)
+            excel_sheets = pd.read_excel(file, sheet_name=None, header=None)
+
+            raw_full = None
+            for sheet_name, sheet_df in excel_sheets.items():
+                if not sheet_df.dropna(how='all').empty:
+                    raw_full = sheet_df
+                    selected_sheet = sheet_name
+                    break
+
+            if raw_full is None:
+                st.error("엑셀에서 데이터가 있는 시트를 찾지 못했습니다.")
+                st.stop()
+
+            st.info(f"읽은 시트: {selected_sheet}")
+
+        else:
+            file.seek(0)
+            raw_full = pd.read_csv(file, header=None)
+
+        # ── 헤더 행 자동 감지 ──────────────────────────────────────────
+        # B(1), J(9), L(11), N(13) 열이 모두 숫자인 첫 번째 행을 데이터 시작점으로 결정
+        # → 화주마다 헤더 위치가 달라도 자동 대응
+        data_start_row = None
+        for scan_idx in range(len(raw_full)):
+            b_val = raw_full.iloc[scan_idx, 1]
+            j_val = raw_full.iloc[scan_idx, 9]
+            l_val = raw_full.iloc[scan_idx, 11]
+            n_val = raw_full.iloc[scan_idx, 13]
+            try:
+                if (pd.notna(b_val) and pd.notna(j_val) and pd.notna(l_val) and pd.notna(n_val)
+                        and float(str(j_val).replace(',', '')) > 0
+                        and float(str(l_val).replace(',', '')) > 0
+                        and float(str(n_val).replace(',', '')) > 0):
+                    data_start_row = scan_idx
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        if data_start_row is None:
+            st.error("⚠️ 데이터 행을 찾지 못했습니다. B열(PKG), J열(L), L열(W), N열(H)에 숫자값이 있는지 확인하세요.")
+            st.stop()
+
+        st.caption(f"📍 데이터 시작 행: 엑셀 {data_start_row + 1}행 (시트: {selected_sheet})")
+
+        raw_process = (
+            raw_full
+            .iloc[data_start_row:]
+            .reset_index(drop=False)
+            .rename(columns={'index': 'orig_idx'})
+        )
+
         p_data = []
         for i in range(len(raw_process)):
             row = raw_process.iloc[i]
-            # 💡 수정: 최신 엑셀 열(B, I, J, L, N) 고정 매핑
-            # B=1, D=3, E=4, I=8, J=9, L=11, N=13
-            pkg_v = str(row[1]).strip() if pd.notna(row[1]) else None
-            l_v = clean_num(row[9])
-            w_v = clean_num(row[11])
-            h_v = clean_num(row[13])
-            weight_v = clean_num(row[8]) # 중량은 clean_num에서 결측치 시 0.0 처리됨
-            
+
+            # 열 고정 매핑: B=1, D=3, E=4, H=7(NetWt), J=9(L), L=11(W), N=13(H)
+            pkg_v = str(row[1]).replace('00:00:00', '').replace('.0', '').strip() if pd.notna(row[1]) else None
+            l_v = clean_num(row[9])       # J열: LENGTH
+            w_v = clean_num(row[11])      # L열: WIDTH
+            h_v = clean_num(row[13])      # N열: HEIGHT
+            weight_v = clean_num(row[8])  # I열: GROSS WEIGHT
+
             # PKG NO와 치수(LWH)만 필수값으로 체크
-            if not pkg_v or pkg_v in ['nan', '.', ''] or l_v == 0 or w_v == 0 or h_v == 0:
+            if not pkg_v or pkg_v.lower() in ['nan', 'none', '.', ''] or l_v == 0 or w_v == 0 or h_v == 0:
                 continue
-            
+
             p_data.append({
-                'PKG NO': pkg_v, 
-                'GROUP': str(row[3]) if pd.notna(row[3]) else "-", 
-                'ITEM': str(row[3]) if pd.notna(row[3]) else "-", 
-                'DESC': str(row[4]) if pd.notna(row[4]) else "-", 
-                'L': l_v, 'W': w_v, 'H': h_v, 'WEIGHT': weight_v, 
-                'STACK_OK': False, 'row_idx': i+5
+                'PKG NO': pkg_v,
+                'GROUP': str(row[4]) if pd.notna(row[4]) else "-",   # E열: Description (그룹핑 기준)
+                'ITEM': str(row[3]) if pd.notna(row[3]) else "-",    # D열: ITEM
+                'DESC': str(row[4]) if pd.notna(row[4]) else "-",    # E열: Description
+                'L': l_v,
+                'W': w_v,
+                'H': h_v,
+                'WEIGHT': weight_v,
+                'STACK_OK': False,
+                # 원본 엑셀 행 위치 보존 (다운로드 시 결과 기입용)
+                'row_idx': int(row['orig_idx'])
             })
-        
+
         df = pd.DataFrame(p_data)
         if df.empty:
             st.warning("⚠️ 지정된 열(B, J, L, N)에서 필수 데이터를 찾을 수 없습니다. 양식을 확인하세요.")
@@ -349,13 +409,88 @@ if file is not None:
                     st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            export_df = raw_full.copy()
-            target_col = export_df.shape[1]
-            export_df[target_col] = ""; export_df.iloc[3, target_col] = "배정 컨테이너"
-            for r_idx, label in {item['row_idx']: bx['c_label'] for bx in bins for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', []))}.items(): export_df.iloc[r_idx, target_col] = label
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer: export_df.to_excel(writer, index=False, header=False)
+            # --- 최종 결과 다운로드: 원본 엑셀 양식 유지 ---
             st.markdown("---")
-            st.download_button(label="📥 최종 결과 다운로드 (배정 정보 포함)", data=output.getvalue(), file_name="CLP_RESULT_FINAL.xlsx", use_container_width=True)
+
+            mapping = {
+                item['row_idx']: bx['c_label']
+                for bx in bins
+                for item in (
+                    [i for r in bx['rows'] for i in r['items']]
+                    + bx.get('stacked_items', [])
+                )
+            }
+
+            if file.name.endswith('.xlsx'):
+                file.seek(0)
+                wb = load_workbook(file)
+
+                # 위에서 자동 선택한 데이터 시트에 결과만 추가
+                ws = wb[selected_sheet]
+
+                target_col = ws.max_column + 1
+                target_letter = ws.cell(row=1, column=target_col).column_letter
+
+                # 제목 입력: 원본 양식 기준 4행에 표시
+                ws.cell(row=4, column=target_col).value = "배정 컨테이너"
+
+                # 제목 셀 스타일 복사
+                if target_col > 1:
+                    src_cell = ws.cell(row=4, column=target_col - 1)
+                    dst_cell = ws.cell(row=4, column=target_col)
+                    dst_cell.font = copy(src_cell.font)
+                    dst_cell.fill = copy(src_cell.fill)
+                    dst_cell.border = copy(src_cell.border)
+                    dst_cell.alignment = copy(src_cell.alignment)
+                    dst_cell.number_format = src_cell.number_format
+
+                # 배정 결과 입력
+                # row_idx는 pandas 기준 0부터 시작하므로 엑셀 행 번호는 +1
+                for r_idx, label in mapping.items():
+                    excel_row = int(r_idx) + 1
+                    ws.cell(row=excel_row, column=target_col).value = label
+
+                    # 왼쪽 셀의 양식 복사
+                    if target_col > 1:
+                        src_cell = ws.cell(row=excel_row, column=target_col - 1)
+                        dst_cell = ws.cell(row=excel_row, column=target_col)
+                        dst_cell.font = copy(src_cell.font)
+                        dst_cell.fill = copy(src_cell.fill)
+                        dst_cell.border = copy(src_cell.border)
+                        dst_cell.alignment = copy(src_cell.alignment)
+                        dst_cell.number_format = src_cell.number_format
+
+                ws.column_dimensions[target_letter].width = 25
+
+                output = io.BytesIO()
+                wb.save(output)
+
+                st.download_button(
+                    label="📥 최종 결과 다운로드 (원본 양식 유지)",
+                    data=output.getvalue(),
+                    file_name="CLP_RESULT_FINAL.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+            else:
+                export_df = raw_full.copy()
+                target_col = export_df.shape[1]
+                export_df[target_col] = ""
+                export_df.iloc[3, target_col] = "배정 컨테이너"
+
+                for r_idx, label in mapping.items():
+                    export_df.iloc[int(r_idx), target_col] = label
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    export_df.to_excel(writer, index=False, header=False)
+
+                st.download_button(
+                    label="📥 최종 결과 다운로드",
+                    data=output.getvalue(),
+                    file_name="CLP_RESULT_FINAL.xlsx",
+                    use_container_width=True
+                )
 
     except Exception as e: st.error(f"데이터 처리 중 오류 발생: {e}")
