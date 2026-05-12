@@ -8,36 +8,42 @@ import io
 # --- 1. 화면 스타일 및 테마 설정 ---
 st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
 
-# 칼트로지스 브랜드 컬러 (Deep Navy & Blue)
+# 칼트로지스 브랜드 컬러
 MAIN_COLOR = "#001f3f"
 SUB_COLOR = "#f0f2f6"
 ACCENT_COLOR = "#007bff"
 
 st.markdown(f"""
     <style>
-    /* 전체 배경 및 폰트 */
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * {{ font-family: 'Pretendard', sans-serif; }}
     
     .main {{ background-color: #f8f9fa; }}
     
-    /* 상단 타이틀 바 */
+    /* 상단 타이틀 바 디자인 */
     .header-container {{
         background-color: {MAIN_COLOR};
-        padding: 25px;
+        padding: 30px;
         border-radius: 12px;
         color: white;
         margin-bottom: 25px;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: space-between;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }}
     
-    /* 카드 스타일 섹션 */
-    .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
+    .logo-container {{
+        background-color: white;
+        padding: 15px 30px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: inline-block;
+    }}
     
-    /* 메트릭 카드 */
+    /* 카드 및 메트릭 스타일 */
+    .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
     [data-testid="stMetric"] {{
         background-color: white;
         padding: 15px;
@@ -46,7 +52,7 @@ st.markdown(f"""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }}
 
-    /* 버튼 스타일 커스텀 */
+    /* 버튼 스타일 */
     .stButton>button {{
         width: 100%;
         font-weight: 600;
@@ -60,34 +66,31 @@ st.markdown(f"""
     .stButton>button:hover {{
         background-color: {ACCENT_COLOR};
         color: white;
-        border-color: {ACCENT_COLOR};
     }}
     
-    /* 사이드바 스타일 */
-    .css-1d391kg {{ background-color: {SUB_COLOR}; }}
-    
-    /* 표(Table) 가독성 향상 */
     div[data-testid="stTable"] {{ font-size: 12px !important; }}
     th {{ background-color: {SUB_COLOR} !important; color: {MAIN_COLOR}; font-weight: bold; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 상단 헤더 영역 ---
+# --- 상단 헤더 영역 (로고 및 타이틀) ---
+logo_path = "칼트로지스로고.png"
+
 with st.container():
-    col_logo, col_text = st.columns([1, 4])
-    logo_path = "칼트로지스로고.png"
-    with col_text:
-        st.markdown(f"""
-            <div class="header-container">
-                <div style="font-size: 30px; font-weight: 800; letter-spacing: -1px;">CALT-LOGIS CLP SYSTEM</div>
-                <div style="font-size: 14px; opacity: 0.8; text-align: right;">Busan New Port Center<br>Integrated Logistics Management</div>
-            </div>
-        """, unsafe_allow_html=True)
-    with col_logo:
-        if os.path.exists(logo_path): 
-            st.image(logo_path, width=220)
-        else:
-            st.markdown(f"<h2 style='color:{MAIN_COLOR};'>CALT-LOGIS</h2>", unsafe_allow_html=True)
+    # 로고를 감싸는 흰색 박스 디자인
+    st.markdown('<div class="header-container">', unsafe_allow_html=True)
+    
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=300)
+    else:
+        # 로고 파일이 없을 경우 표시될 텍스트 로고
+        st.markdown(f'<div class="logo-container"><h1 style="color:{MAIN_COLOR}; margin:0; letter-spacing:-1px;">CALT-LOGIS</h1></div>', unsafe_allow_html=True)
+    
+    st.markdown(f"""
+        <div style="font-size: 24px; font-weight: 700; margin-top:10px;">CONTAINER LOADING PLAN SYSTEM</div>
+        <div style="font-size: 14px; opacity: 0.8; margin-top:5px;">Busan New Port Center | Logistics Management Excellence</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 def clean_num(val):
     try:
@@ -95,7 +98,7 @@ def clean_num(val):
         return float(str(val).replace(',', '').strip())
     except: return None
 
-# --- 2. 사이드바: 설정 영역 (메인 화면 확보) ---
+# --- 2. 사이드바: 설정 영역 ---
 with st.sidebar:
     st.header("⚙️ 배정 옵션 설정")
     st.markdown("---")
@@ -112,7 +115,6 @@ with st.sidebar:
 
     with st.expander("🛠 적재 로직 제어", expanded=True):
         use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=True)
-        # 요청하신 대로 다단적재 기본값을 False로 설정했습니다.
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
     
     if st.button("🔄 AI 최적화 재계산"):
@@ -120,13 +122,12 @@ with st.sidebar:
         st.rerun()
     
     st.markdown("---")
-    st.caption("v2.0 | 칼트로지스 부산 신항 센터 전용")
+    st.caption("v2.1 | 칼트로지스 부산 신항 센터 전용")
 
-# --- 3. 짐 배치 핵심 알고리즘 ---
+# --- 3. 적재 알고리즘 ---
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
     for piece in pieces:
         placed = False
-        # 다단적재 로직
         if allow_stacking and piece['STACK_OK'] and piece['WEIGHT'] <= 1000 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             if 'stacked_items' not in b: b['stacked_items'] = []
             b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']; b['groups'].add(piece['GROUP']); placed = True
@@ -156,9 +157,7 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
         tags = []
         if is_fv: tags.append("FV")
         else:
-            if is_oh: tags.append("OH"); 
-            if is_ow: tags.append("OW"); 
-            if is_ol: tags.append("OL")
+            if is_oh: tags.append("OH"); if is_ow: tags.append("OW"); if is_ol: tags.append("OL")
         if b['type'] == "FR":
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}" if tags else f"{base} #{b['id']}"
@@ -186,8 +185,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         r_pieces = [p for p in all_pieces if p['REQ_TYPE'] == r_type]
         type_bins = []
         if use_balancing:
-            total_l = sum(p['L'] for p in r_pieces)
-            total_w = sum(p['WEIGHT'] for p in r_pieces)
+            total_l, total_w = sum(p['L'] for p in r_pieces), sum(p['WEIGHT'] for p in r_pieces)
             est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
             for _ in range(est_bins):
                 type_bins.append({'id': c_no, 'type': r_type, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
@@ -208,11 +206,10 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
                 c_no += 1
         if use_balancing: bins.extend([b for b in type_bins if b['used_L'] > 0])
     
-    bins.sort(key=lambda x: x['id'])
-    return apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h)
+    return apply_labels(sorted(bins, key=lambda x: x['id']), max_20_len, max_20_wt, fr_max_len, max_dry_h)
 
-# --- 4. 메인 화면 로직 ---
-file = st.file_uploader("📂 패킹리스트 엑셀 파일을 업로드하세요 (XLSX, CSV)", type=['csv', 'xlsx'])
+# --- 4. 메인 화면 ---
+file = st.file_uploader("📂 패킹리스트 엑셀 파일을 업로드하세요", type=['csv', 'xlsx'])
 
 if file is not None:
     try:
@@ -237,24 +234,20 @@ if file is not None:
         bins = st.session_state.bins
         target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
-        # --- 상단 대시보드 ---
-        st.subheader("📊 실시간 적재 현황")
+        st.subheader("📊 실시간 적재 요약")
         m1, m2, m3, m4 = st.columns(4)
         packed_qty = sum([len(r['items']) for b in bins for r in b['rows']]) + sum([len(b.get('stacked_items', [])) for b in bins])
         m1.metric("전체 화물", f"{len(df)} PKG")
         m2.metric("배정 완료", f"{packed_qty} PKG")
-        m3.metric("컨테이너 수량", f"{len(bins)} UNIT")
+        m3.metric("컨테이너 수", f"{len(bins)} UNIT")
         m4.metric("평균 중량", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg")
 
         st.markdown("---")
 
-        # --- 컨테이너 상세 섹션 ---
         for b in bins:
             if b['used_L'] == 0 and not b.get('stacked_items'): continue
-            
             with st.expander(f"📦 {b['c_label']}", expanded=True):
                 c_info1, c_info2 = st.columns([3, 2])
-                
                 with c_info1:
                     t_data = []
                     for r in b['rows']:
@@ -266,7 +259,7 @@ if file is not None:
                                             column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
                                             disabled=['위치', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT'])
                     
-                    if st.button(f"💾 {b['id']}번 컨테이너 변경사항 적용", key=f"btn_{b['id']}"):
+                    if st.button(f"💾 {b['id']}번 변경사항 적용", key=f"btn_{b['id']}"):
                         moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
                         if moves:
                             new_alloc = []
@@ -285,51 +278,38 @@ if file is not None:
                             st.rerun()
 
                 with c_info2:
-                    # 적재 점유율 게이지
                     cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                     cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
-                    
-                    st.write(f"**길이 점유:** {b['used_L']:,} / {cur_max_l:,} mm")
+                    st.write(f"**길이:** {b['used_L']:,} / {cur_max_l:,} mm")
                     st.progress(min(1.0, b['used_L']/cur_max_l))
-                    st.write(f"**중량 점유:** {b['total_W']:,} / {cur_max_w:,} kg")
+                    st.write(f"**중량:** {b['total_W']:,} / {cur_max_w:,} kg")
                     st.progress(min(1.0, b['total_W']/cur_max_w))
                     
-                    # 도면 시각화
                     fig = go.Figure()
-                    # 컨테이너 외곽선
                     fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
                     cx = 0
                     for r in b['rows']:
                         cy = (2350 - r['used_W']) / 2
                         for item in r['items']:
-                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], 
-                                         fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
+                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
                             fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=9))
                             cy += item['W']
                         cx += r['max_L'] + 50
                     fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=220, margin=dict(l=10,r=10,t=10,b=10), paper_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig, use_container_width=True)
 
-        # --- 데이터 다운로드 ---
-        mapping = {}
-        for bx in bins:
-            for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
-                mapping[item['row_idx']] = bx['c_label']
-        
+        mapping = {item['row_idx']: bx['c_label'] for bx in bins for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', []))}
         export_df = raw_full.copy()
-        target_col = export_df.shape[1] 
-        export_df[target_col] = "" 
-        export_df.iloc[3, target_col] = "배정 컨테이너" 
+        target_col = export_df.shape[1]
+        export_df[target_col] = ""
+        export_df.iloc[3, target_col] = "배정 컨테이너"
         for r_idx, label in mapping.items(): export_df.iloc[r_idx, target_col] = label
-            
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, header=False, sheet_name='CLP_Result')
+        with pd.ExcelWriter(output, engine='openpyxl') as writer: export_df.to_excel(writer, index=False, header=False, sheet_name='CLP_Result')
         
         st.markdown("---")
-        st.download_button(label="📥 최종 배정 결과 엑셀 다운로드", data=output.getvalue(), file_name="CALT_CLP_RESULT.xlsx", use_container_width=True)
+        st.download_button(label="📥 최종 결과 엑셀 다운로드", data=output.getvalue(), file_name="CALT_CLP_RESULT.xlsx", use_container_width=True)
 
-    except Exception as e: st.error(f"데이터 처리 중 오류 발생: {e}")
-
+    except Exception as e: st.error(f"오류 발생: {e}")
 else:
-    st.info("👆 왼쪽 상단의 업로드 버튼을 눌러 패킹리스트 파일을 선택해 주세요.")
+    st.info("👆 파일을 업로드하면 분석을 시작합니다.")
