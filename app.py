@@ -146,13 +146,13 @@ with st.sidebar:
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
         st.markdown("**🟦 20ft DRY**")
         max_20_wt  = st.number_input("최대 중량 (kg)",  15000, 40000, 28250, key="i_20wt")
-        max_20_len = st.number_input("최대 길이 (mm)",  5500,  6500,  5899,  key="i_20len")
+        max_20_len = st.number_input("최대 길이 (mm)",  5500,  6500,  5900,  key="i_20len")
         st.markdown("---")
         st.markdown("**🟫 40ft DRY / HC**")
         max_40_wt  = st.number_input("최대 중량 (kg)",  20000, 40000, 29500, key="i_40wt")
-        max_40_len = st.number_input("최대 길이 (mm)",  11000, 13000, 12034, key="i_40len")
-        max_dry_h  = st.number_input("DRY 내부 높이 (mm)", 2000, 3000, 2390, key="i_dryh")
-        max_hc_h   = st.number_input("HC 내부 높이 (mm)",  2000, 3500, 2695, key="i_hch")
+        max_40_len = st.number_input("최대 길이 (mm)",  11000, 13000, 11900, key="i_40len")
+        max_dry_h  = st.number_input("DRY 내부 높이 (mm)", 2000, 3000, 2370, key="i_dryh")
+        max_hc_h   = st.number_input("HC 내부 높이 (mm)",  2000, 3500, 2670, key="i_hch")
 
     with st.expander("🛠 적재 로직", expanded=True):
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
@@ -181,7 +181,7 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
         row_found = False
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
-            if r['used_W'] + piece['W'] <= 2350 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+            if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
                 r['items'].append(piece); r['used_W'] += piece['W']; b['used_L'] += (temp_max_L - r['max_L'])
                 r['max_L'] = temp_max_L; b['total_W'] += piece['WEIGHT']
                 b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
@@ -193,15 +193,14 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
             b['max_W'] = max(b['max_W'], piece['W']); b['max_H'] = max(b['max_H'], piece['H'])
             b['groups'].add(piece['GROUP']); placed = True
 
-def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
+def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h):
     for b in bins:
         is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
-        is_ow, is_oh = b['max_W'] > 2350, b['max_H'] > max_hc_h
-        is_ol = b['used_L'] > fr_max_len
+        is_ow = b['max_W'] > 2340
+        is_oh = b['max_H'] > max_hc_h
         tags = []
         if is_oh: tags.append("OH")
         if is_ow: tags.append("OW")
-        if is_ol: tags.append("OL")
         if tags:
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
@@ -232,11 +231,11 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         n = len(items)
         # 방향 A: el=s(짧은쪽→컨테이너L), ew=lg(긴쪽→컨테이너W)
         # 방향 B: el=lg(긴쪽→컨테이너L), ew=s(짧은쪽→컨테이너W) ← 회전
-        can_a = lg <= 2350
-        can_b = s <= 2350
+        can_a = lg <= 2340
+        can_b = s <= 2340
         if can_a and can_b:
-            slots_a = max(1, int(2350 // lg))
-            slots_b = max(1, int(2350 // s))
+            slots_a = max(1, int(2340 // lg))
+            slots_b = max(1, int(2340 // s))
             L_used_a = math.ceil(n / slots_a) * s
             L_used_b = math.ceil(n / slots_b) * lg
             # 나란히 2개 이상 가능하고 L 소비가 더 적은 방향으로
@@ -252,9 +251,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     # 우선순위: FR(OW/OH) → HC → Dry
     # 각 상위 등급 bin의 남는 공간에 하위 등급 화물을 채워 컨테이너 수 최소화
     sk = lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP'])
-    fr_pieces  = sorted([p for p in all_pieces if p['W'] > 2350 or p['H'] > max_hc_h],  key=sk)
-    hc_pieces  = sorted([p for p in all_pieces if p['W'] <= 2350 and max_dry_h < p['H'] <= max_hc_h], key=sk)
-    dry_pieces = sorted([p for p in all_pieces if p['W'] <= 2350 and p['H'] <= max_dry_h], key=sk)
+    fr_pieces  = sorted([p for p in all_pieces if p['W'] > 2340 or p['H'] > max_hc_h],  key=sk)
+    hc_pieces  = sorted([p for p in all_pieces if p['W'] <= 2340 and max_dry_h < p['H'] <= max_hc_h], key=sk)
+    dry_pieces = sorted([p for p in all_pieces if p['W'] <= 2340 and p['H'] <= max_dry_h], key=sk)
 
     def _pack_group(pieces, c_no_start):
         if not pieces:
@@ -302,7 +301,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     bins = fr_bins + hc_bins + dry_bins
     for idx, b in enumerate(bins):
         b['id'] = idx + 1
-    return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
+    return apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h)
 
 # --- 3. 메인 화면 로직 ---
 def reset_data():
@@ -460,7 +459,7 @@ if file is not None:
                         for item, t_id in new_alloc:
                             if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
-                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h, max_hc_h)
+                        st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_dry_h, max_hc_h)
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 제원 확인", expanded=False):
@@ -475,8 +474,8 @@ if file is not None:
                     c1.markdown(f"**📏 길이:** {b['used_L']:,}/{cur_max_l:,}mm"); c1.progress(min(1.0, b['used_L']/cur_max_l))
                     c2.markdown(f"**⚖️ 중량:** {b['total_W']:,}/{cur_max_w:,}kg"); c2.progress(min(1.0, b['total_W']/cur_max_w))
                     
-                    if used_width > 2350: c3.markdown(f"**↔️ 폭:** {used_width:,}/2350mm <span style='color:{ALERT_COLOR};font-weight:bold;'>[OW +{used_width-2350:,}]</span>", unsafe_allow_html=True)
-                    else: c3.markdown(f"**↔️ 폭:** {used_width:,}/2350mm"); c3.progress(min(1.0, used_width/2350))
+                    if used_width > 2350: c3.markdown(f"**↔️ 폭:** {used_width:,}/2340mm <span style='color:{ALERT_COLOR};font-weight:bold;'>[OW +{used_width-2350:,}]</span>", unsafe_allow_html=True)
+                    else: c3.markdown(f"**↔️ 폭:** {used_width:,}/2340mm"); c3.progress(min(1.0, used_width/2340))
                     
                     if used_height > cur_max_h: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm <span style='color:{ALERT_COLOR};font-weight:bold;'>[OH +{used_height-cur_max_h:,}]</span>", unsafe_allow_html=True)
                     else: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm"); c4.progress(min(1.0, used_height/cur_max_h))
@@ -495,7 +494,7 @@ if file is not None:
                     fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
                     cx = 0
                     for r in b['rows']:
-                        cy = (2350 - r['used_W']) / 2
+                        cy = (2340 - r['used_W']) / 2
                         for item in r['items']:
                             # CLP 참고: FR(OW/OH)→빨강, HC→주황, Dry→파랑
                             if item['W'] > 2350 or item['H'] > max_hc_h: item_color = ALERT_COLOR
