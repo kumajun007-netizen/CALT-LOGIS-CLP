@@ -62,7 +62,6 @@ st.markdown(f"""
         border: 1px solid #e1e4e8;
         margin-bottom: 20px;
     }}
-    /* 가이드 테이블 스타일 수정 */
     .guide-table {{ font-size: 11px; width: 100%; border-collapse: collapse; }}
     .guide-table th, .guide-table td {{ border: 1px solid #ddd; padding: 5px; text-align: center; }}
     .guide-table th {{ background-color: #eee; }}
@@ -90,7 +89,6 @@ with st.sidebar:
     if os.path.exists(logo_path):
         st.image(logo_path, use_column_width=True)
 
-    # 💡 수정: 필수(계산용) 항목을 강조한 엑셀 가이드
     with st.expander("📄 엑셀 업로드 표준 규격 (열 확인)", expanded=True):
         st.markdown(f"""
         <table class="guide-table">
@@ -156,9 +154,15 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
         is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
         is_fv = is_ol or (is_ow and is_oh)
         tags = []
-        if is_fv: tags.append("FV")
+        
+        # 💡 에러 발생 원인이었던 부분을 올바르게 여러 줄로 풀었습니다.
+        if is_fv: 
+            tags.append("FV")
         else:
-            if is_oh: tags.append("OH"); if is_ow: tags.append("OW"); if is_ol: tags.append("OL")
+            if is_oh: tags.append("OH")
+            if is_ow: tags.append("OW")
+            if is_ol: tags.append("OL")
+            
         if b['type'] == "FR":
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}" if tags else f"{base} #{b['id']}"
@@ -223,18 +227,15 @@ if file is not None:
         for i in range(len(raw_process)):
             row = raw_process.iloc[i]; s_ok = row.astype(str).str.contains('단적허용').any() if allow_stacking else False
             
-            # 💡 수정: 필수 데이터 추출 로직 강화
             pkg_v = str(row[0]).strip() if pd.notna(row[0]) else None
             weight_v = clean_num(row[9])
             l_v = clean_num(row[10])
             w_v = clean_num(row[12])
             h_v = clean_num(row[14])
             
-            # 필수 5항목 중 하나라도 없으면 해당 줄 건너뜀
             if any(v is None for v in [pkg_v, weight_v, l_v, w_v, h_v]) or pkg_v in ['nan', '.', '']:
                 continue
             
-            # 참고 항목은 없어도 계산 가능하게 기본값 처리
             p_data.append({
                 'PKG NO': pkg_v, 
                 'GROUP': str(row[4]) if pd.notna(row[4]) else "-", 
