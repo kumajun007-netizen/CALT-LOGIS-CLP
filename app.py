@@ -148,7 +148,7 @@ with st.sidebar:
         max_hc_h = st.number_input("HC 높이 (mm)", 2000, 3500, 2695)
 
     with st.expander("🛠 적재 로직", expanded=True):
-        use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=True)
+        use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=False)
         allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=False)
     
     if st.button("🔄 AI 재계산 실행"):
@@ -190,7 +190,7 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
-            if b['max_H'] > max_dry_h: base = "40ft HC"
+            if b['max_H'] > max_dry_h: base = "20ft HC" if is_20ft_size else "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
     return bins
@@ -233,8 +233,15 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
     bins = []; c_no = 1
     if use_balancing:
-        total_l, total_w = sum(p['L'] for p in all_pieces), sum(p['WEIGHT'] for p in all_pieces)
-        est_bins = max(1, math.ceil(total_l / max_40_len), math.ceil(total_w / max_40_wt))
+        # 나란히 배치(W방향 묶음) 반영 실제 L 추정 - 단순합 시 회전으로 L 과대계산 방지
+        from collections import Counter
+        real_total_l = 0
+        for (el, ew), cnt in Counter((p['L'], p['W']) for p in all_pieces).items():
+            slots = max(1, int(2350 // ew))
+            rows = math.ceil(cnt / slots)
+            real_total_l += rows * el
+        total_w = sum(p['WEIGHT'] for p in all_pieces)
+        est_bins = max(1, math.ceil(real_total_l / max_40_len), math.ceil(total_w / max_40_wt))
         for _ in range(est_bins):
             bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
             c_no += 1
