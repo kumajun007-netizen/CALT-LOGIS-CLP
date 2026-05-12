@@ -523,17 +523,9 @@ if file is not None:
                             # 다단 화물: 테두리 강조
                             border = dict(color="#FFD700", width=3) if layers > 1 else dict(color="white", width=1)
                             fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=item_color, opacity=0.85, line=border)
-                            # 다단 화물: PKG NO 범위 요약 표시 (개별 나열 시 텍스트 범람 방지)
+                            # 다단 화물: 바닥 PKG NO + 단수 표시 (stacked는 테이블에서 확인)
                             if layers > 1:
-                                stk_pkgs = [s['PKG NO'] for s in b.get('stacked_items',[])
-                                            if (s['L'],s['W'],s['H']) == dim]
-                                all_pkgs = [item['PKG NO']] + stk_pkgs
-                                total = len(all_pkgs)
-                                if total > 2:
-                                    pkg_text = f"{all_pkgs[0]}~{all_pkgs[-1]}<br><sub>({total}개)</sub>"
-                                else:
-                                    pkg_text = "<br>".join(all_pkgs)
-                                label = f"<b>×{layers}단</b><br>{pkg_text}<br><sub>H{item['H']}</sub>"
+                                label = f"<b>×{layers}단</b><br>{item['PKG NO']}<br><sub>H{item['H']}</sub>"
                             else:
                                 label = f"{item['PKG NO']}<br><sub>H{item['H']}</sub>"
                             fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2,
