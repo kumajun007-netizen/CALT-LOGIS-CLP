@@ -89,7 +89,6 @@ with st.sidebar:
     if os.path.exists(logo_path):
         st.image(logo_path, use_column_width=True)
 
-    # 💡 수정: GROUP/ITEM을 통합하고 DESCRIPTION 위치를 F열(5)로 변경
     with st.expander("📄 엑셀 업로드 표준 규격 (열 확인)", expanded=True):
         st.markdown(f"""
         <table class="guide-table">
@@ -179,7 +178,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         else: el, ew = max(l, w), min(l, w)
         req = "FR" if ew > 2350 or el > fr_max_len or h > max_hc_h else "DRY"
         all_pieces.append({**row, 'L': el, 'W': ew, 'H': h, 'WEIGHT': weight, 'REQ_TYPE': req})
-    all_pieces.sort(key=lambda x: (x['REQ_TYPE'], x['GROUP'], x['PKG NO']))
+    
+    # 💡 핵심 수정: 크기가 같고 큰 화물(특히 W, H)끼리 뭉치도록 정렬 로직 완전 개편
+    # 정렬 우선순위: 1순위(컨테이너 종류), 2순위(폭이 넓은 것), 3순위(높이가 높은 것), 4순위(길이가 긴 것), 5순위(그룹)
+    # 내림차순을 위해 앞에 마이너스(-) 기호를 붙여 가장 큰 치수끼리 먼저 뭉치게 만듭니다.
+    all_pieces.sort(key=lambda x: (x['REQ_TYPE'], -x['W'], -x['H'], -x['L'], x['GROUP']))
+    
     bins = []; c_no = 1
     req_types = sorted(list(set(p['REQ_TYPE'] for p in all_pieces)))
     for r_type in req_types:
@@ -234,7 +238,6 @@ if file is not None:
             if any(v is None for v in [pkg_v, weight_v, l_v, w_v, h_v]) or pkg_v in ['nan', '.', '']:
                 continue
             
-            # 💡 수정: E열(row[4])을 GROUP과 ITEM으로 공통 사용, F열(row[5])을 DESC로 사용
             val_group_item = str(row[4]).strip() if pd.notna(row[4]) else "-"
             val_desc = str(row[5]).strip() if pd.notna(row[5]) else "-"
 
@@ -251,7 +254,6 @@ if file is not None:
         if df.empty:
             st.warning("⚠️ 필수 항목이 모두 채워진 화물 데이터가 없습니다. 엑셀 열 번호를 확인하세요.")
         else:
-            # 💡 기존 로직 유지 (TOTAL 문구가 포함된 행은 제외)
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
 
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
@@ -279,7 +281,6 @@ if file is not None:
                     for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
                 for s in b.get('stacked_items', []): t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번"})
                 
-                # 💡 수정: 화면 표에 ITEM(Group과 동일)과 DESC 항목을 보여주도록 구성
                 df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'DESC', 'L', 'W', 'WEIGHT', '이동']]
                 edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
                                         column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
