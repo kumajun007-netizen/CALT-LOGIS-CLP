@@ -206,7 +206,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     # 같은 치수의 화물 N개를 배치할 때 컨테이너 L 소비가 최소인 방향 선택
     size_groups = {}
     for p in raw_pieces:
-        key = (min(p['L'], p['W']), max(p['L'], p['W']))
+        # HC 필요 여부를 키에 포함 → HC끼리, Dry끼리 각각 나란히 방향 최적화
+        is_hc = p['H'] > max_dry_h
+        key = (min(p['L'], p['W']), max(p['L'], p['W']), is_hc)
         size_groups.setdefault(key, []).append(p)
 
     all_pieces = []
