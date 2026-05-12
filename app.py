@@ -31,7 +31,18 @@ st.markdown(f"""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
     
-    /* 💡 수정 1: 흰색 빈 박스를 만들던 불필요한 내부 캐시 클래스(CSS)를 완벽히 제거했습니다. */
+    /* 💡 추가: 파일 업로드(드래그 앤 드롭) 영역 시각적 강조 */
+    [data-testid="stFileUploadDropzone"] {{
+        border: 2px dashed {MAIN_COLOR};
+        background-color: #eaf1fb;
+        padding: 40px;
+        border-radius: 12px;
+        transition: all 0.3s ease;
+    }}
+    [data-testid="stFileUploadDropzone"]:hover {{
+        background-color: #d1e3fa;
+        border-color: {ACCENT_COLOR};
+    }}
     
     /* 메트릭 박스 높이 완벽 고정 */
     [data-testid="stMetric"] {{
@@ -201,7 +212,10 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h)
 
 # --- 3. 메인 화면 로직 ---
-file = st.file_uploader("📂 패킹리스트 엑셀 파일을 업로드하세요", type=['csv', 'xlsx'])
+
+# 💡 수정: 파일 업로더 문구를 더 직관적으로 변경
+st.markdown("### 📤 패킹리스트 엑셀 업로드")
+file = st.file_uploader("이곳에 엑셀(.xlsx) 또는 CSV 파일을 드래그 앤 드롭하세요.", type=['csv', 'xlsx'])
 
 if file is not None:
     try:
@@ -224,7 +238,6 @@ if file is not None:
         bins = st.session_state.bins
         target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
-        # --- 💡 수정 2: (무결성 검증) 글자 삭제 ---
         st.subheader("📊 실시간 적재 요약")
         m1, m2, m3, m4 = st.columns(4)
         packed_qty = sum([len(r['items']) for b in bins for r in b['rows']]) + sum([len(b.get('stacked_items', [])) for b in bins])
@@ -234,9 +247,7 @@ if file is not None:
         m3.metric("필요 컨테이너", f"{len(bins)} UNIT")
         m4.metric("평균 중량 효율", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg/UNIT")
 
-        # 💡 수정 3: 박스 사이의 가로줄(st.markdown("---")) 삭제하여 깔끔하게 연결
-
-        st.markdown("<br>", unsafe_allow_html=True) # 약간의 간격만 줌
+        st.markdown("<br>", unsafe_allow_html=True)
 
         # --- 컨테이너별 상세 정보 ---
         for b in bins:
