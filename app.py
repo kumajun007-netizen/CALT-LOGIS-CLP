@@ -15,13 +15,11 @@ ACCENT_COLOR = "#007bff"
 
 st.markdown(f"""
     <style>
-    /* 전체 배경 및 폰트 */
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * {{ font-family: 'Pretendard', sans-serif; }}
     
     .main {{ background-color: #f8f9fa; }}
     
-    /* 상단 타이틀 바 */
     .header-container {{
         background-color: {MAIN_COLOR};
         padding: 25px;
@@ -32,10 +30,8 @@ st.markdown(f"""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
     
-    /* 카드 스타일 섹션 */
     .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
     
-    /* 메트릭 카드 */
     [data-testid="stMetric"] {{
         background-color: white;
         padding: 15px;
@@ -44,7 +40,6 @@ st.markdown(f"""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }}
 
-    /* 버튼 스타일 커스텀 */
     .stButton>button {{
         width: 100%;
         font-weight: 600;
@@ -60,11 +55,9 @@ st.markdown(f"""
         color: white;
     }}
     
-    /* 표(Table) 가독성 향상 */
     div[data-testid="stTable"] {{ font-size: 12px !important; }}
     th {{ background-color: {SUB_COLOR} !important; color: {MAIN_COLOR}; }}
     
-    /* 컨테이너별 박스 디자인 */
     .container-box {{
         background-color: white;
         padding: 20px;
@@ -243,7 +236,6 @@ if file is not None:
             st.markdown(f'<div class="container-box">', unsafe_allow_html=True)
             st.markdown(f"### 📦 {b['c_label']}")
             
-            # 💡 수정 1: 화물 표는 기본적으로 항상 보이도록 바깥에 배치
             st.markdown("**📋 적재 화물 목록 및 위치 변경**")
             t_data = []
             for r in b['rows']:
@@ -275,7 +267,6 @@ if file is not None:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # 💡 수정 2: 점유율 게이지와 도면만 디폴트로 접힌 상태로 설정
             with st.expander("👁️ 적재 단면도 및 점유율 확인 (클릭하여 펼치기)", expanded=False):
                 cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                 cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
@@ -290,20 +281,35 @@ if file is not None:
                 
                 # 도면 시각화
                 fig = go.Figure()
+                
+                # 💡 수정 1: 컨테이너의 빈 공간을 옅은 회색으로 표시하여 시각적 대비 확보
+                fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
+                
+                # 컨테이너 외곽선
                 fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
+                
                 cx = 0
                 for r in b['rows']:
                     cy = (2350 - r['used_W']) / 2
                     for item in r['items']:
-                        fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
+                        fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.8, line=dict(color="white", width=1))
                         fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
                         cy += item['W']
-                    cx += r['max_L'] + 50
+                    cx += r['max_L'] # 불필요한 시각적 50mm 간격을 제거하여 실제 계산된 used_L과 일치시킴
                 
+                # 💡 수정 2: 적재 완료 지점에 빨간색 점선 및 텍스트 어노테이션 추가
+                fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2550, line=dict(color="#e74c3c", width=2, dash="dash"))
+                
+                if b['used_L'] > 300:
+                    fig.add_annotation(x=b['used_L']/2, y=-300, text=f"적재됨: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=12, weight="bold"))
+                if cur_max_l - b['used_L'] > 300:
+                    fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=-300, text=f"잔여 공간: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color="#e74c3c", size=12, weight="bold"))
+                
+                # 💡 수정 3: x축의 최대 범위를 무조건 40ft 기준으로 픽스 (20ft는 절반만 차지하여 직관적으로 확인 가능)
                 fig.update_layout(
-                    xaxis=dict(visible=False, range=[-200, cur_max_l + 200]), 
-                    yaxis=dict(visible=False, range=[-200, 2550]), 
-                    height=220, 
+                    xaxis=dict(visible=False, range=[-200, max_40_len + 400]), 
+                    yaxis=dict(visible=False, range=[-500, 2600]), 
+                    height=260, 
                     margin=dict(l=10, r=10, t=15, b=10), 
                     paper_bgcolor="rgba(0,0,0,0)"
                 )
