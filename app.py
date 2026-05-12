@@ -212,7 +212,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         size_groups.setdefault(key, []).append(p)
 
     all_pieces = []
-    for (s, lg), items in size_groups.items():
+    for (s, lg, _), items in size_groups.items():
         n = len(items)
         # 방향 A: el=s(짧은쪽→컨테이너L), ew=lg(긴쪽→컨테이너W)
         # 방향 B: el=lg(긴쪽→컨테이너L), ew=s(짧은쪽→컨테이너W) ← 회전
