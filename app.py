@@ -106,35 +106,33 @@ with st.sidebar:
         </table>
         <p style='font-size:11px; color:gray; margin-top:10px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>
         """, unsafe_allow_html=True)
-
-    # 💡 신규 추가: 표준 양식 다운로드 기능
-    st.markdown("---")
-    template_data = {
-        "Invoice No": [""],
-        "No.of PKG": ["PKG-001"],
-        "LOCATION": [""],
-        "ITEM": ["SAMPLE ITEM"],
-        "Description of Goods": ["DETAIL DESC"],
-        "Q'ty": [1],
-        "UNIT": ["EA"],
-        "Net Weight (kg)": [500],
-        "Gross Weight (kg)": [550],
-        "Dimension L (mm)": [1200],
-        "X1": ["X"],
-        "Dimension W (mm)": [1000],
-        "X2": ["X"],
-        "Dimension H (mm)": [2300]
-    }
-    df_template = pd.DataFrame(template_data)
-    tow = io.BytesIO()
-    df_template.to_excel(tow, index=False, header=True, engine='openpyxl')
-    st.download_button(
-        label="📥 신규 화주용 양식 다운로드",
-        data=tow.getvalue(),
-        file_name="CALT_CLP_TEMPLATE.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+        st.markdown("---")
+        template_data = {
+            "Invoice No": [""],
+            "No.of PKG": ["PKG-001"],
+            "LOCATION": [""],
+            "ITEM": ["SAMPLE ITEM"],
+            "Description of Goods": ["DETAIL DESC"],
+            "Q'ty": [1],
+            "UNIT": ["EA"],
+            "Net Weight (kg)": [500],
+            "Gross Weight (kg)": [550],
+            "Dimension L (mm)": [1200],
+            "X1": ["X"],
+            "Dimension W (mm)": [1000],
+            "X2": ["X"],
+            "Dimension H (mm)": [2300]
+        }
+        df_template = pd.DataFrame(template_data)
+        tow = io.BytesIO()
+        df_template.to_excel(tow, index=False, header=True, engine='openpyxl')
+        st.download_button(
+            label="📥 신규 화주용 양식 다운로드",
+            data=tow.getvalue(),
+            file_name="CALT_CLP_TEMPLATE.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
     st.header("⚙️ 배정 옵션 설정")
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
