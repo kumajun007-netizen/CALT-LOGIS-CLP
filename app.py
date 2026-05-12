@@ -62,10 +62,6 @@ st.markdown(f"""
         border: 1px solid #e1e4e8;
         margin-bottom: 20px;
     }}
-    .guide-table {{ font-size: 11px; width: 100%; border-collapse: collapse; }}
-    .guide-table th, .guide-table td {{ border: 1px solid #ddd; padding: 5px; text-align: center; }}
-    .guide-table th {{ background-color: #eee; }}
-    .essential {{ color: {ALERT_COLOR}; font-weight: bold; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -83,52 +79,55 @@ def clean_num(val):
         return float(str(val).replace(',', '').strip())
     except: return 0.0
 
+def get_col_idx(letter):
+    """엑셀 알파벳(A, B, C...)을 시스템 인덱스(0, 1, 2...)로 변환"""
+    try:
+        letter = str(letter).upper().strip()
+        ans = 0
+        for c in letter:
+            ans = ans * 26 + (ord(c) - ord('A') + 1)
+        return ans - 1
+    except: return 0
+
+def safe_get(row, idx):
+    if 0 <= idx < len(row): return row.iloc[idx]
+    return None
+
+def reset_data():
+    if 'bins' in st.session_state: del st.session_state['bins']
+    if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
+
 # --- 2. 사이드바: 엑셀 열 가이드 및 설정 ---
 with st.sidebar:
     logo_path = "칼트로지스로고.png"
     if os.path.exists(logo_path):
         st.image(logo_path, use_column_width=True)
 
-    with st.expander("📄 엑셀 업로드 표준 규격 (열 고정)", expanded=True):
-        st.markdown(f"""
-        <table class="guide-table">
-            <tr><th>항목</th><th>엑셀 열</th><th>구분</th></tr>
-            <tr class="essential"><td>No.of PKG</td><td>B 열</td><td>[필수]</td></tr>
-            <tr class="essential"><td>LENGTH (L)</td><td>J 열</td><td>[필수]</td></tr>
-            <tr class="essential"><td>WIDTH (W)</td><td>L 열</td><td>[필수]</td></tr>
-            <tr class="essential"><td>HEIGHT (H)</td><td>N 열</td><td>[필수]</td></tr>
-            <tr><td>WEIGHT</td><td>I 열</td><td>선택</td></tr>
-            <tr><td>ITEM</td><td>D 열</td><td>참고</td></tr>
-            <tr><td>DESCRIPTION</td><td>E 열</td><td>참고</td></tr>
-        </table>
-        <p style='font-size:11px; color:gray; margin-top:10px;'>* 빈 줄은 시스템이 자동으로 건너뜁니다.</p>
-        """, unsafe_allow_html=True)
+    # 💡 킬러 기능: 사용자가 직접 엑셀 알파벳 열을 컨트롤 할 수 있는 UI 추가
+    with st.expander("📄 엑셀 열 매핑 (알파벳 지정)", expanded=True):
+        st.markdown("<p style='font-size:12px; color:gray;'>양식이 바뀌면 아래 알파벳만 변경하세요.</p>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        col_pkg = c1.text_input("PKG NO (필수)", value="B", on_change=reset_data)
+        col_wt = c2.text_input("WEIGHT (선택)", value="I", on_change=reset_data)
+        col_l = c1.text_input("LENGTH (필수)", value="J", on_change=reset_data)
+        col_w = c2.text_input("WIDTH (필수)", value="L", on_change=reset_data)
+        col_h = c1.text_input("HEIGHT (필수)", value="N", on_change=reset_data)
+        col_grp = c2.text_input("ITEM (참고)", value="D", on_change=reset_data)
+        col_desc = c1.text_input("DESC (참고)", value="E", on_change=reset_data)
 
     st.markdown("---")
     template_data = {
-        "Invoice No": [""],
-        "No.of PKG": ["PKG-001"],
-        "LOCATION": [""],
-        "ITEM": ["SAMPLE ITEM"],
-        "Description of Goods": ["DETAIL DESC"],
-        "Q'ty": [1],
-        "UNIT": ["EA"],
-        "Net Weight (kg)": [500],
-        "Gross Weight (kg)": [550],
-        "Dimension L (mm)": [1200],
-        "X1": ["X"],
-        "Dimension W (mm)": [1000],
-        "X2": ["X"],
-        "Dimension H (mm)": [2300]
+        "Invoice No": [""], "No.of PKG": ["PKG-001"], "LOCATION": [""], "ITEM": ["SAMPLE ITEM"],
+        "Description of Goods": ["DETAIL DESC"], "Q'ty": [1], "UNIT": ["EA"], "Net Weight (kg)": [""],
+        "Gross Weight (kg)": [550], "Dimension L (mm)": [1200], "X1": ["X"], "Dimension W (mm)": [1000],
+        "X2": ["X"], "Dimension H (mm)": [2300]
     }
     df_template = pd.DataFrame(template_data)
     tow = io.BytesIO()
     df_template.to_excel(tow, index=False, header=True, engine='openpyxl')
     st.download_button(
-        label="📥 신규 화주용 표준 양식 다운로드",
-        data=tow.getvalue(),
-        file_name="CALT_CLP_TEMPLATE.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        label="📥 신규 화주용 표준 양식 다운로드", data=tow.getvalue(),
+        file_name="CALT_CLP_TEMPLATE.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
@@ -223,41 +222,48 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
 
 # --- 3. 메인 화면 로직 ---
-def reset_data():
-    if 'bins' in st.session_state: del st.session_state['bins']
-    if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
-
 st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
 file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv', 'xlsx'], on_change=reset_data)
 
 if file is not None:
     try:
-        # 💡 핵심 수정: skiprows를 아예 빼버리고 처음부터 끝까지 전체를 다 읽어옵니다.
-        raw_process = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
+        # 💡 수정: skiprows를 완전히 제거하고 1번 줄부터 끝까지 전부 스캔합니다.
+        raw_full = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
         
+        idx_pkg = get_col_idx(col_pkg)
+        idx_wt = get_col_idx(col_wt)
+        idx_l = get_col_idx(col_l)
+        idx_w = get_col_idx(col_w)
+        idx_h = get_col_idx(col_h)
+        idx_grp = get_col_idx(col_grp)
+        idx_desc = get_col_idx(col_desc)
+
         p_data = []
-        for i in range(len(raw_process)):
-            row = raw_process.iloc[i]
-            
-            # 14개 미만의 열을 가진 비정상적인 줄은 무시 (N열이 13번째 인덱스이므로 최소 14개 필요)
-            if len(row) < 14:
-                continue
-                
+        last_pkg_no = "UNKNOWN" # 병합셀 처리를 위한 변수
+
+        for i in range(len(raw_full)):
+            row = raw_full.iloc[i]
             s_ok = row.astype(str).str.contains('단적허용').any() if allow_stacking else False
             
-            # B=1, D=3, E=4, I=8, J=9, L=11, N=13
-            pkg_v = str(row[1]).strip() if pd.notna(row[1]) else None
-            l_v = clean_num(row[9])
-            w_v = clean_num(row[11])
-            h_v = clean_num(row[13])
-            weight_v = clean_num(row[8]) # 중량은 빈 값이면 0.0으로 들어감
+            # 지정된 열에서 데이터 추출
+            raw_pkg = safe_get(row, idx_pkg)
             
-            # 💡 핵심 수정: L, W, H가 모두 정상적인 숫자(0보다 큼)이고 PKG NO가 있는 경우에만 '진짜 데이터'로 인식
-            if not pkg_v or pkg_v in ['nan', '.', '', 'No.of PKG'] or l_v == 0 or w_v == 0 or h_v == 0:
+            # 💡 수정: PKG NO가 비어있어도 윗줄의 PKG NO를 그대로 물려받습니다 (병합셀 완벽 대응)
+            if pd.notna(raw_pkg) and str(raw_pkg).strip() not in ['', '.', 'nan', 'No.of PKG', 'PKG NO']:
+                last_pkg_no = str(raw_pkg).strip()
+            
+            pkg_v = last_pkg_no
+            l_v = clean_num(safe_get(row, idx_l))
+            w_v = clean_num(safe_get(row, idx_w))
+            h_v = clean_num(safe_get(row, idx_h))
+            weight_v = clean_num(safe_get(row, idx_wt))
+            
+            # 💡 수정: 필수 제원(L, W, H) 3개가 모두 0보다 큰 숫자일 때만 진짜 화물로 인정!
+            if l_v == 0 or w_v == 0 or h_v == 0 or pkg_v == "UNKNOWN":
                 continue
             
-            val_group_item = str(row[3]).strip() if pd.notna(row[3]) else "-"
-            val_desc = str(row[4]).strip() if pd.notna(row[4]) else "-"
+            val_group_item = str(safe_get(row, idx_grp)).strip() if pd.notna(safe_get(row, idx_grp)) else "-"
+            val_desc = str(safe_get(row, idx_desc)).strip() if pd.notna(safe_get(row, idx_desc)) else "-"
 
             p_data.append({
                 'PKG NO': pkg_v, 
@@ -269,8 +275,13 @@ if file is not None:
             })
         
         df = pd.DataFrame(p_data)
+        
+        # 만약 진짜 못 찾았을 경우 디버깅 화면 제공
         if df.empty:
-            st.warning("⚠️ 지정된 열(B, J, L, N)에서 필수 데이터를 찾을 수 없습니다. 다운로드 받은 표준 양식을 확인하세요.")
+            st.error("⚠️ 설정된 열(Column)에서 필수 항목(L, W, H) 숫자를 찾지 못했습니다.")
+            st.info("💡 사이드바의 **[엑셀 열 매핑]** 알파벳이 실제 엑셀 파일과 일치하는지 확인해 주세요.")
+            with st.expander("🔍 시스템이 읽어들인 엑셀 원본 구조 보기 (어떤 열에 데이터가 있는지 확인하세요)", expanded=True):
+                st.dataframe(raw_full.head(15))
         else:
             df = df[~df['ITEM'].str.upper().str.contains('TOTAL', na=False)]
 
@@ -357,7 +368,7 @@ if file is not None:
                     st.plotly_chart(fig, use_container_width=True, key=f"plot_{b['id']}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            export_df = raw_process.copy()
+            export_df = raw_full.copy()
             target_col = export_df.shape[1]
             export_df[target_col] = ""; export_df.iloc[0, target_col] = "배정 컨테이너"
             for r_idx, label in {item['row_idx']: bx['c_label'] for bx in bins for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', []))}.items(): export_df.iloc[r_idx, target_col] = label
