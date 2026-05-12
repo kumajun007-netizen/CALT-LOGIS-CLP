@@ -164,16 +164,20 @@ with st.sidebar:
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
     for piece in pieces:
         placed = False
-        # REMARK 다단 지시(2단/3단) 또는 전역 다단 옵션 ON 시 적재 시도
-        # MAX_STK: REMARK에서 지정한 최대 단수 (기본 1)
+        # 다단 적재: REMARK 지시(2단/3단) 또는 전역 옵션
+        # 핵심 원칙: 바닥(rows)에 동일 치수 화물이 있어야만 그 위에 적재 가능
         max_stk = piece.get('MAX_STK', 1)
         can_stack = (allow_stacking and piece['STACK_OK']) or max_stk > 1
         if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
-            # 동일 PKG 그룹에서 현재 단수 확인
-            stacked = b.get('stacked_items', [])
-            same = [s for s in stacked if s['L'] == piece['L'] and s['W'] == piece['W'] and s['H'] == piece['H']]
-            cur_stk = len(same) + 1  # 바닥 1단 포함
-            if cur_stk <= max_stk:
+            dim = (piece['L'], piece['W'], piece['H'])
+            # 바닥(rows)에 있는 동일 치수 화물 수
+            base_n = sum(1 for r in b['rows'] for item in r['items']
+                         if (item['L'], item['W'], item['H']) == dim)
+            # stacked에 쌓인 동일 치수 화물 수
+            stk_n  = sum(1 for s in b.get('stacked_items', [])
+                         if (s['L'], s['W'], s['H']) == dim)
+            # 바닥에 화물이 있고, 아직 (max_stk-1)단 × base_n 개 미만이면 적재
+            if base_n > 0 and stk_n < (max_stk - 1) * base_n:
                 if 'stacked_items' not in b: b['stacked_items'] = []
                 b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                 b['groups'].add(piece['GROUP']); placed = True
@@ -467,8 +471,18 @@ if file is not None:
                     cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
                     cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
                     used_width = max([r['used_W'] for r in b['rows']] + [0])
-                    max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
-                    used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
+                    # 다단 높이 계산: 동일 치수 기준 최대 적재 단수 × 높이
+                    if b.get('stacked_items'):
+                        from collections import Counter
+                        base_cnt = Counter((i['L'],i['W'],i['H']) for r in b['rows'] for i in r['items'])
+                        stk_cnt  = Counter((s['L'],s['W'],s['H']) for s in b['stacked_items'])
+                        max_stk_h = max(
+                            (h * (1 + stk_cnt.get((l,w,h),0) // max(1, base_cnt.get((l,w,h),1))))
+                            for (l,w,h) in base_cnt if (l,w,h) in stk_cnt
+                        ) if stk_cnt else b['max_H']
+                        used_height = max(b['max_H'], max_stk_h)
+                    else:
+                        used_height = b['max_H']
                     
                     c1, c2, c3, c4 = st.columns(4)
                     c1.markdown(f"**📏 길이:** {b['used_L']:,}/{cur_max_l:,}mm"); c1.progress(min(1.0, b['used_L']/cur_max_l))
