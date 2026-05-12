@@ -5,23 +5,82 @@ import math
 import os
 import io
 
-# --- 1. 화면 스타일 ---
-st.set_page_config(page_title="CALTALOGIS CLP 시스템", layout="wide")
-st.markdown("""
+# --- 1. 화면 스타일 및 테마 설정 ---
+st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
+
+# 칼트로지스 공식 컬러 가이드 적용 (Deep Navy & Soft Gray)
+MAIN_COLOR = "#001f3f"
+SUB_COLOR = "#f0f2f6"
+ACCENT_COLOR = "#007bff"
+
+st.markdown(f"""
     <style>
-    .navy-title { color: #001f3f; font-size: 32px; font-weight: bold; margin-bottom: 10px; }
-    div[data-testid="stTable"] { font-size: 11px !important; }
-    th { background-color: #f0f2f6 !important; font-size: 11px !important; font-weight: bold; color: #001f3f; }
-    td { font-size: 11px !important; }
-    .stExpander { border: 1px solid #e6e9ef; border-radius: 5px; margin-bottom: 10px; }
-    .stButton>button { width: 100%; font-weight: bold; color: white; background-color: #001f3f; border-radius: 5px; }
-    .stButton>button:hover { background-color: #003366; color: white; border-color: #001f3f; }
+    /* 전체 배경 및 폰트 */
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    * {{ font-family: 'Pretendard', sans-serif; }}
+    
+    .main {{ background-color: #f8f9fa; }}
+    
+    /* 상단 타이틀 바 */
+    .header-container {{
+        background-color: {MAIN_COLOR};
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        margin-bottom: 25px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }}
+    
+    /* 카드 스타일 섹션 */
+    .st-emotion-cache-1r6slb0 {{ border-radius: 10px; border: 1px solid #e1e4e8; background-color: white; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
+    
+    /* 메트릭 카드 */
+    [data-testid="stMetric"] {{
+        background-color: white;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid {MAIN_COLOR};
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }}
+
+    /* 버튼 스타일 커스텀 */
+    .stButton>button {{
+        width: 100%;
+        font-weight: 600;
+        color: white;
+        background-color: {MAIN_COLOR};
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        transition: 0.3s;
+    }}
+    .stButton>button:hover {{
+        background-color: {ACCENT_COLOR};
+        color: white;
+    }}
+    
+    /* 표(Table) 가독성 향상 */
+    div[data-testid="stTable"] {{ font-size: 12px !important; }}
+    th {{ background-color: {SUB_COLOR} !important; color: {MAIN_COLOR}; }}
     </style>
     """, unsafe_allow_html=True)
 
-logo_path = "칼트로지스로고.png" 
-if os.path.exists(logo_path): st.image(logo_path, width=280)
-st.markdown('<p class="navy-title">칼트로지스 CLP 시스템</p>', unsafe_allow_html=True)
+# --- 상단 헤더 영역 ---
+with st.container():
+    col_logo, col_text = st.columns([1, 4])
+    logo_path = "칼트로지스로고.png"
+    with col_text:
+        st.markdown(f"""
+            <div class="header-container">
+                <div style="font-size: 28px; font-weight: 800; letter-spacing: -1px;">CALT-LOGIS CLP SYSTEM</div>
+                <div style="font-size: 14px; opacity: 0.8;">Busan New Port Center | Logistics Management</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with col_logo:
+        if os.path.exists(logo_path): 
+            st.image(logo_path, width=220)
 
 def clean_num(val):
     try:
@@ -29,7 +88,32 @@ def clean_num(val):
         return float(str(val).replace(',', '').strip())
     except: return None
 
-# --- 2. 짐 배치 핵심 로직 ---
+# --- 2. 사이드바: 설정 영역 (메인 화면 확보) ---
+with st.sidebar:
+    st.header("⚙️ 배정 옵션 설정")
+    st.markdown("---")
+    
+    with st.expander("⚖️ 컨테이너 제원", expanded=True):
+        max_40_wt = st.number_input("40ft 중량 (kg)", 20000, 40000, 29500)
+        max_40_len = st.number_input("40ft 길이 (mm)", 11000, 13000, 12034)
+        st.markdown("---")
+        max_20_wt = st.number_input("20ft 중량 (kg)", 15000, 40000, 28250)
+        max_20_len = st.number_input("20ft 길이 (mm)", 5500, 6500, 5899)
+        st.markdown("---")
+        max_dry_h = st.number_input("DRY 높이 (mm)", 2000, 3000, 2390)
+        max_hc_h = st.number_input("HC 높이 (mm)", 2000, 3500, 2695)
+
+    with st.expander("🛠 적재 로직", expanded=True):
+        use_balancing = st.checkbox("⚖️ 균분적재 (Balancing)", value=True)
+        allow_stacking = st.checkbox("🏢 다단적재 (Stacking)", value=True)
+    
+    if st.button("🔄 AI 재계산 실행"):
+        st.session_state['manual_mode'] = False
+    
+    st.markdown("---")
+    st.info("파일 수정 후 이 버튼을 눌러 설정을 적용하세요.")
+
+# --- 짐 배치 핵심 로직 (기존 로직 유지) ---
 def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
     for piece in pieces:
         placed = False
@@ -58,24 +142,16 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h):
         is_ow, is_oh, is_ol = b['max_W'] > 2300, b['max_H'] > 1900, b['used_L'] > fr_max_len
         is_fv = is_ol or (is_ow and is_oh)
         tags = []
-        
-        # 💡 [문제의 그 부분 완벽 수정] 절대 오류가 나지 않도록 안전하게 분리했습니다!
-        if is_fv: 
-            tags.append("FV")
+        if is_fv: tags.append("FV")
         else:
-            if is_oh: 
-                tags.append("OH")
-            if is_ow: 
-                tags.append("OW")
-            if is_ol: 
-                tags.append("OL")
-                
+            if is_oh: tags.append("OH"); 
+            if is_ow: tags.append("OW"); 
+            if is_ol: tags.append("OL")
         if b['type'] == "FR":
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
-            if is_fv: base += " (FV)"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}" if tags else f"{base} #{b['id']}"
         else:
-            if b['max_H'] > max_dry_h: base = "40ft HC (High Cube)"
+            if b['max_H'] > max_dry_h: base = "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
     return bins
@@ -119,25 +195,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     bins.sort(key=lambda x: x['id'])
     return apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h)
 
-# --- 3. UI 설정 ---
-with st.expander("⚙️ 컨테이너 제원 및 배정 옵션", expanded=False):
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        max_40_wt = st.number_input("⚖️ 40ft 중량 (kg)", 20000, 40000, 29500)
-        max_20_wt = st.number_input("⚖️ 20ft 중량 (kg)", 15000, 40000, 28250)
-    with c2:
-        max_40_len = st.number_input("📏 40ft 길이 (mm)", 11000, 13000, 12034)
-        max_20_len = st.number_input("📏 20ft 길이 (mm)", 5500, 6500, 5899)
-    with c3:
-        max_dry_h = st.number_input("📏 DRY 높이 (mm)", 2000, 3000, 2390)
-        max_hc_h = st.number_input("📏 HC 높이 (mm)", 2000, 3500, 2695)
-    with c4:
-        st.markdown("<br>", unsafe_allow_html=True)
-        use_balancing = st.checkbox("⚖️ 균분적재 (해제 시 몰아적재)", value=True)
-        allow_stacking = st.checkbox("🏢 다단적재 (단적) 허용", value=True)
-    if st.button("🔄 설정 적용 및 AI 재계산"): st.session_state['manual_mode'] = False
-
-file = st.file_uploader("패킹리스트 업로드", type=['csv', 'xlsx'])
+# --- 3. 파일 업로드 및 분석 ---
+file = st.file_uploader("📂 패킹리스트 엑셀 파일을 업로드하세요", type=['csv', 'xlsx'])
 
 if file is not None:
     try:
@@ -160,60 +219,75 @@ if file is not None:
         bins = st.session_state.bins
         target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
-        # --- 🔍 결과 출력 ---
-        st.markdown("---")
-        st.subheader("🔍 배정 무결성 검증 (Cross-Check)")
+        # --- 대시보드 요약 지표 ---
+        st.subheader("📊 실시간 적재 요약")
+        m1, m2, m3, m4 = st.columns(4)
         packed_qty = sum([len(r['items']) for b in bins for r in b['rows']]) + sum([len(b.get('stacked_items', [])) for b in bins])
-        st.metric("총 적재 수량", f"{packed_qty} PKG / {len(df)} PKG")
+        m1.metric("총 화물 수량", f"{len(df)} PKG")
+        m2.metric("배정 완료", f"{packed_qty} PKG", f"{packed_qty - len(df)}")
+        m3.metric("필요 컨테이너", f"{len(bins)} UNIT")
+        m4.metric("평균 중량 효율", f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg/UNIT")
+
         st.markdown("---")
 
+        # --- 컨테이너별 상세 정보 ---
         for b in bins:
             if b['used_L'] == 0 and not b.get('stacked_items'): continue
-            st.markdown(f"#### 📦 {b['c_label']}")
-            t_data = []
-            for r in b['rows']:
-                for item in r['items']: t_data.append({**item, '상태': '바닥', '이동 목적지': f"{b['id']}번"})
-            for s in b.get('stacked_items', []): t_data.append({**s, '상태': '단적', '이동 목적지': f"{b['id']}번"})
             
-            df_edit = pd.DataFrame(t_data)[['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'H', 'WEIGHT', '이동 목적지']]
-            edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
-                                       column_config={"이동 목적지": st.column_config.SelectboxColumn("🚚 이동 (클릭)", options=target_options)},
-                                       disabled=['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'H', 'WEIGHT'])
-            
-            if st.button(f"🚀 {b['id']}번 컨테이너 변경 적용", key=f"apply_{b['id']}"):
-                moves = [(r['PKG NO'], r['이동 목적지']) for _, r in edited_df.iterrows() if r['이동 목적지'] != f"{b['id']}번"]
-                if moves:
-                    new_alloc = []
-                    max_id = max([bx['id'] for bx in st.session_state.bins])
-                    for bx in st.session_state.bins:
-                        for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
-                            target = bx['id']
-                            for m_pkg, m_tgt in moves:
-                                if str(item['PKG NO']) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
-                            new_alloc.append((item, target))
-                    new_bins_dict = {}
-                    for item, t_id in new_alloc:
-                        if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'type': item['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                        pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
-                    st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h)
-                    st.rerun()
+            with st.container():
+                st.markdown(f"### 📦 {b['c_label']}")
+                c_info1, c_info2 = st.columns([2, 1])
+                
+                with c_info1:
+                    t_data = []
+                    for r in b['rows']:
+                        for item in r['items']: t_data.append({**item, '상태': '바닥', '이동': f"{b['id']}번"})
+                    for s in b.get('stacked_items', []): t_data.append({**s, '상태': '단적', '이동': f"{b['id']}번"})
+                    
+                    df_edit = pd.DataFrame(t_data)[['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT', '이동']]
+                    edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
+                                            column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
+                                            disabled=['상태', 'PKG NO', 'GROUP', 'ITEM', 'L', 'W', 'WEIGHT'])
+                    
+                    if st.button(f"🚀 {b['id']}번 컨테이너 변경사항 적용", key=f"btn_{b['id']}"):
+                        moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
+                        if moves:
+                            new_alloc = []
+                            max_id = max([bx['id'] for bx in st.session_state.bins])
+                            for bx in st.session_state.bins:
+                                for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
+                                    target = bx['id']
+                                    for m_pkg, m_tgt in moves:
+                                        if str(item['PKG NO']) == str(m_pkg): target = max_id + 1 if "새" in m_tgt else int(m_tgt.replace("번",""))
+                                    new_alloc.append((item, target))
+                            new_bins_dict = {}
+                            for item, t_id in new_alloc:
+                                if t_id not in new_bins_dict: new_bins_dict[t_id] = {'id': t_id, 'type': item['REQ_TYPE'], 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                                pack_items_into_bin([item], new_bins_dict[t_id], max_40_wt, max_40_len)
+                            st.session_state.bins = apply_labels(sorted(list(new_bins_dict.values()), key=lambda x: x['id']), max_20_len, max_20_wt, max_40_len-430, max_dry_h)
+                            st.rerun()
 
-            with st.expander(f"📊 요약: {b['used_L']:,}mm / {b['total_W']:,}kg (도면)"):
-                d_len = max_20_len if "20ft" in b['c_label'] else max_40_len
-                fig = go.Figure()
-                fig.add_shape(type="rect", x0=0, y0=0, x1=d_len, y1=2350, line=dict(color="black", width=2))
-                cx = 0
-                for r in b['rows']:
-                    cy = (2350 - r['used_W']) / 2
-                    for item in r['items']:
-                        fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor="royalblue", opacity=0.7)
-                        fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=item['PKG NO'], showarrow=False, font=dict(color="white"))
-                        cy += item['W']
-                    cx += r['max_L'] + 50
-                fig.update_layout(xaxis=dict(range=[-200, d_len+500]), yaxis=dict(range=[-500, 3000]), height=300, margin=dict(l=0,r=0,t=0,b=0))
-                st.plotly_chart(fig, use_container_width=True)
+                with c_info2:
+                    st.markdown(f"**길이 점유:** {b['used_L']:,} / {max_40_len if '40ft' in b['c_label'] else max_20_len:,} mm")
+                    st.progress(min(1.0, b['used_L']/(max_40_len if '40ft' in b['c_label'] else max_20_len)))
+                    st.markdown(f"**중량 점유:** {b['total_W']:,} / {max_40_wt if '40ft' in b['c_label'] else max_20_wt:,} kg")
+                    st.progress(min(1.0, b['total_W']/(max_40_wt if '40ft' in b['c_label'] else max_20_wt)))
+                    
+                    # 도면 시각화
+                    d_len = max_20_len if "20ft" in b['c_label'] else max_40_len
+                    fig = go.Figure()
+                    fig.add_shape(type="rect", x0=0, y0=0, x1=d_len, y1=2350, line=dict(color=MAIN_COLOR, width=2))
+                    cx = 0
+                    for r in b['rows']:
+                        cy = (2350 - r['used_W']) / 2
+                        for item in r['items']:
+                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.7, line=dict(color="white", width=1))
+                            cy += item['W']
+                        cx += r['max_L'] + 50
+                    fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False), height=180, margin=dict(l=5,r=5,t=5,b=5), paper_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(fig, use_container_width=True)
 
-        # --- 💡 엑셀 다운로드 (원본 양식 유지) ---
+        # --- 데이터 다운로드 ---
         mapping = {}
         for bx in bins:
             for item in ([i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])):
@@ -223,16 +297,13 @@ if file is not None:
         target_col = export_df.shape[1] 
         export_df[target_col] = "" 
         export_df.iloc[3, target_col] = "배정 컨테이너" 
-        
-        for r_idx, label in mapping.items():
-            export_df.iloc[r_idx, target_col] = label
+        for r_idx, label in mapping.items(): export_df.iloc[r_idx, target_col] = label
             
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, header=False, sheet_name='CLP_결과')
+            export_df.to_excel(writer, index=False, header=False, sheet_name='CLP_Result')
         
         st.markdown("---")
-        st.subheader("💾 최종 배정 결과 다운로드 (원본 양식 유지)")
-        st.download_button(label="📥 원본 양식에 컨테이너 번호 달아서 저장하기", data=output.getvalue(), file_name="CLP_배정결과_원본양식.xlsx", use_container_width=True)
+        st.download_button(label="📥 최종 배정 결과 엑셀 다운로드", data=output.getvalue(), file_name="CALT_CLP_RESULT.xlsx", use_container_width=True)
 
-    except Exception as e: st.error(f"오류 발생: {e}")
+    except Exception as e: st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
