@@ -209,6 +209,9 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
 
 def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt):
     for b in bins:
+        # 수동 재계산으로 타입이 강제 지정된 bin은 레이블 유지
+        if b.get('forced_label'):
+            continue
         is_20ft_size  = b['used_L'] <= max_20_len  and b['total_W'] <= max_20_wt
         is_20fr_size  = b['used_L'] <= max_fr20_len and b['total_W'] <= max_fr20_wt
         is_ow = b['max_W'] > 2340
@@ -493,14 +496,15 @@ if file is not None:
                             overflow.append(item)
                     # 높이/폭 초과 화물 체크
                     h_exceed = [i for i in (new_bin['stacked_items'] + [x for r in new_bin['rows'] for x in r['items']]) if i['H'] > spec['max_h']]
-                    # 새 레이블 부여
-                    new_bin['c_label'] = f"{spec['label_base']} #{b['id']}"
+                    # 레이블 강제 지정 (apply_labels가 덮어쓰지 않도록 forced_label=True)
+                    new_bin['c_label']     = f"{spec['label_base']} #{b['id']}"
+                    new_bin['forced_label'] = True
                     # 기존 bins에서 해당 bin 교체
                     updated = []
                     for bx in st.session_state.bins:
                         if bx['id'] == b['id']: updated.append(new_bin)
                         else: updated.append(bx)
-                    # 초과 화물 새 bin으로 추가
+                    # 초과 화물 → 자동 배치로 새 bin 생성 (apply_labels로 타입 자동 결정)
                     if overflow:
                         max_id = max(bx['id'] for bx in updated)
                         ov_bin = {'id': max_id+1, 'rows': [], 'used_L': 0, 'total_W': 0,
@@ -546,9 +550,14 @@ if file is not None:
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 제원 확인", expanded=False):
-                    cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
-                    cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
-                    cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
+                    # c_label 기반 정확한 제원 결정
+                    _lbl = b['c_label']
+                    if   '20ft Dry'       in _lbl: cur_max_l, cur_max_w, cur_max_h = max_20_len,   max_20_wt,   max_dry_h
+                    elif '40ft HC'        in _lbl: cur_max_l, cur_max_w, cur_max_h = max_40_len,   max_40_wt,   max_hc_h
+                    elif '40ft Dry'       in _lbl: cur_max_l, cur_max_w, cur_max_h = max_40_len,   max_40_wt,   max_dry_h
+                    elif '20ft Flat Rack' in _lbl: cur_max_l, cur_max_w, cur_max_h = max_fr20_len, max_fr20_wt, max_fr_h
+                    elif '40ft Flat Rack' in _lbl: cur_max_l, cur_max_w, cur_max_h = max_fr40_len, max_fr40_wt, max_fr_h
+                    else:                          cur_max_l, cur_max_w, cur_max_h = max_40_len,   max_40_wt,   max_dry_h
                     used_width = max([r['used_W'] for r in b['rows']] + [0])
                     # 다단 높이 계산: 동일 치수 기준 최대 적재 단수 × 높이
                     if b.get('stacked_items'):
