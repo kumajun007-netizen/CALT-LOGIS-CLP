@@ -168,27 +168,25 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 # --- 짐 배치 로직 (이전과 동일하지만 입력 정렬 및 혼적 유지) ---
-def pack_items_into_bin(pieces, b, max_40_wt, max_40_len):
+def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None):
     for piece in pieces:
         placed = False
-        # 다단 적재: REMARK 지시(2단/3단) 또는 전역 옵션
-        # 핵심 원칙: 바닥(rows)에 동일 치수 화물이 있어야만 그 위에 적재 가능
+        # 다단 적재: REMARK 2단/3단 지시 시 치수 무관 허용
+        # 바닥(rows)에 화물이 있고 총 단수 한도 내이면 적재
         max_stk = piece.get('MAX_STK', 1)
-        can_stack = (False and piece['STACK_OK']) or max_stk > 1
-        if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
-            dim = (piece['L'], piece['W'], piece['H'])
-            # 바닥(rows)에 있는 동일 치수 화물 수
-            base_n = sum(1 for r in b['rows'] for item in r['items']
-                         if (item['L'], item['W'], item['H']) == dim)
-            # stacked에 쌓인 동일 치수 화물 수
-            stk_n  = sum(1 for s in b.get('stacked_items', [])
-                         if (s['L'], s['W'], s['H']) == dim)
-            # 바닥에 화물이 있고, 아직 (max_stk-1)단 × base_n 개 미만이면 적재
+        if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+            base_n = sum(len(r['items']) for r in b['rows'])
+            stk_n  = len(b.get('stacked_items', []))
             if base_n > 0 and stk_n < (max_stk - 1) * base_n:
-                if 'stacked_items' not in b: b['stacked_items'] = []
-                b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
-                b['groups'].add(piece['GROUP']); placed = True
-                continue
+                # 높이 초과 시 stacked 거부 → FR로 넘어가는 것 방지
+                projected_h = b['max_H'] + piece['H']
+                if max_h and projected_h > max_h:
+                    pass  # 높이 초과 → 일반 배치로 진행
+                else:
+                    if 'stacked_items' not in b: b['stacked_items'] = []
+                    b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
+                    b['groups'].add(piece['GROUP']); placed = True
+                    continue
         row_found = False
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
@@ -280,13 +278,13 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for piece in pieces:
             placed = False
             for b in group_bins:
-                pack_items_into_bin([piece], b, _wt, _len)
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
                 if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
                     placed = True; break
             if not placed:
                 new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
                            'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                pack_items_into_bin([piece], new_bin, _wt, _len)
+                pack_items_into_bin([piece], new_bin, _wt, _len, max_hc_h)
                 group_bins.append(new_bin); c_no += 1
         group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
         return group_bins, c_no
@@ -299,7 +297,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for b in sorted(bins, key=lambda x: x['used_L']):
             for piece in list(remaining):
                 before = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
-                pack_items_into_bin([piece], b, _wt, _len)
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
                 after  = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
                 if after > before:
                     remaining.remove(piece)
@@ -518,15 +516,24 @@ if file is not None:
                         max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt
                     )
                     st.rerun()
+                # 바닥 화물 최소 L×W (하중 위험 판단 기준)
+                base_items = [item for r in b['rows'] for item in r['items']]
+                base_min_L = min((i['L'] for i in base_items), default=0)
+                base_min_W = min((i['W'] for i in base_items), default=0)
+
                 t_data = []
                 for r in b['rows']:
-                    for item in r['items']: t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번"})
-                for s in b.get('stacked_items', []): t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번"})
-                
-                df_edit = pd.DataFrame(t_data)[['위치', 'PKG NO', 'ITEM', 'L', 'W', 'H', 'WEIGHT', '이동']]
+                    for item in r['items']:
+                        t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번", '⚠️': ''})
+                for s in b.get('stacked_items', []):
+                    # 바닥 최솟값보다 L 또는 W가 크면 하중 위험
+                    danger = '🚨' if (s['L'] > base_min_L or s['W'] > base_min_W) else ''
+                    t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번", '⚠️': danger})
+
+                df_edit = pd.DataFrame(t_data)[['⚠️', '위치', 'PKG NO', 'ITEM', 'L', 'W', 'H', 'WEIGHT', '이동']]
                 edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True, key=f"ed_{b['id']}",
                                         column_config={"이동": st.column_config.SelectboxColumn("🚚 이동", options=target_options)},
-                                        disabled=['위치', 'PKG NO', 'ITEM', 'L', 'W', 'H', 'WEIGHT'])
+                                        disabled=['⚠️', '위치', 'PKG NO', 'ITEM', 'L', 'W', 'H', 'WEIGHT'])
                 
                 if st.button(f"🚀 {b['id']}번 변경사항 적용", key=f"btn_{b['id']}"):
                     moves = [(r['PKG NO'], r['이동']) for _, r in edited_df.iterrows() if r['이동'] != f"{b['id']}번"]
