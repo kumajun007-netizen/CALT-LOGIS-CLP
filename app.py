@@ -232,13 +232,13 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
 
         for p in items:
             all_pieces.append({**p, 'L': use_el, 'W': use_ew})
-    # ── Step 3: HC/Dry 높이 기준 분리 → 각각 독립 배치
-    # HC 화물(H > max_dry_h)이 Dry 화물과 섞이면 불필요한 40ft HC 사용
-    # 분리 배치 시 Dry 화물은 20ft Dry 활용 가능
-    hc_pieces  = sorted([p for p in all_pieces if p['H'] > max_dry_h],
-                        key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
-    dry_pieces = sorted([p for p in all_pieces if p['H'] <= max_dry_h],
-                        key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
+    # ── Step 3: 화물 등급 분류 (비용 절감 배치 원칙)
+    # 우선순위: FR(OW/OH) → HC → Dry
+    # 각 상위 등급 bin의 남는 공간에 하위 등급 화물을 채워 컨테이너 수 최소화
+    sk = lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP'])
+    fr_pieces  = sorted([p for p in all_pieces if p['W'] > 2350 or p['H'] > max_hc_h],  key=sk)
+    hc_pieces  = sorted([p for p in all_pieces if p['W'] <= 2350 and max_dry_h < p['H'] <= max_hc_h], key=sk)
+    dry_pieces = sorted([p for p in all_pieces if p['W'] <= 2350 and p['H'] <= max_dry_h], key=sk)
 
     def _pack_group(pieces, c_no_start):
         if not pieces:
@@ -274,9 +274,31 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
         return group_bins, c_no
 
-    hc_bins,  c_no = _pack_group(hc_pieces, 1)
-    dry_bins, c_no = _pack_group(dry_pieces, c_no)
-    bins = hc_bins + dry_bins
+    def _fill_gaps(bins, candidates):
+        """bin의 남는 L 공간에 candidates를 채워 넣고, 배치된 화물을 제거한 나머지 반환"""
+        remaining = list(candidates)
+        for b in sorted(bins, key=lambda x: x['used_L']):  # 덜 찬 bin부터
+            for piece in list(remaining):
+                before = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
+                pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+                after  = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
+                if after > before:
+                    remaining.remove(piece)
+        return remaining
+
+    # ① FR 화물 배치 → 남는 공간에 HC, Dry 순으로 채우기
+    fr_bins, c_no  = _pack_group(fr_pieces, 1)
+    remaining_hc   = _fill_gaps(fr_bins, hc_pieces)
+    remaining_dry  = _fill_gaps(fr_bins, dry_pieces)
+
+    # ② HC 화물 배치 → 남는 공간에 Dry 채우기 → 20ft Dry 활용 극대화
+    hc_bins, c_no  = _pack_group(remaining_hc, c_no)
+    remaining_dry  = _fill_gaps(hc_bins, remaining_dry)
+
+    # ③ 나머지 Dry 화물 배치 (L·중량 기준 20ft Dry 자동 판별)
+    dry_bins, c_no = _pack_group(remaining_dry, c_no)
+
+    bins = fr_bins + hc_bins + dry_bins
     for idx, b in enumerate(bins):
         b['id'] = idx + 1
     return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
