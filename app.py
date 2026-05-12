@@ -190,7 +190,7 @@ def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h):
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
-            if b['max_H'] > max_dry_h: base = "20ft HC" if is_20ft_size else "40ft HC"
+            if b['max_H'] > max_dry_h: base = "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
     return bins
@@ -230,35 +230,53 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
 
         for p in items:
             all_pieces.append({**p, 'L': use_el, 'W': use_ew})
-    all_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
-    bins = []; c_no = 1
-    if use_balancing:
-        # 나란히 배치(W방향 묶음) 반영 실제 L 추정 - 단순합 시 회전으로 L 과대계산 방지
-        from collections import Counter
-        real_total_l = 0
-        for (el, ew), cnt in Counter((p['L'], p['W']) for p in all_pieces).items():
-            slots = max(1, int(2350 // ew))
-            rows = math.ceil(cnt / slots)
-            real_total_l += rows * el
-        total_w = sum(p['WEIGHT'] for p in all_pieces)
-        est_bins = max(1, math.ceil(real_total_l / max_40_len), math.ceil(total_w / max_40_wt))
-        for _ in range(est_bins):
-            bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
-            c_no += 1
-    for piece in all_pieces:
-        placed = False
-        if use_balancing: bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
-        for b in bins:
-            pack_items_into_bin([piece], b, max_40_wt, max_40_len)
-            if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']): 
-                placed = True; break
-        if not placed:
-            new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-            pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
-            bins.append(new_bin); c_no += 1
-    bins = [b for b in bins if b['used_L'] > 0 or b.get('stacked_items')]
-    bins.sort(key=lambda x: x['id'])
-    for idx, b in enumerate(bins): b['id'] = idx + 1
+    # ── Step 3: HC/Dry 높이 기준 분리 → 각각 독립 배치
+    # HC 화물(H > max_dry_h)이 Dry 화물과 섞이면 불필요한 40ft HC 사용
+    # 분리 배치 시 Dry 화물은 20ft Dry 활용 가능
+    hc_pieces  = sorted([p for p in all_pieces if p['H'] > max_dry_h],
+                        key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
+    dry_pieces = sorted([p for p in all_pieces if p['H'] <= max_dry_h],
+                        key=lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP']))
+
+    def _pack_group(pieces, c_no_start):
+        if not pieces:
+            return [], c_no_start
+        c_no = c_no_start
+        group_bins = []
+        if use_balancing:
+            from collections import Counter
+            real_total_l = 0
+            for (el, ew), cnt in Counter((p['L'], p['W']) for p in pieces).items():
+                slots = max(1, int(2350 // ew))
+                rows  = math.ceil(cnt / slots)
+                real_total_l += rows * el
+            total_w = sum(p['WEIGHT'] for p in pieces)
+            est = max(1, math.ceil(real_total_l / max_40_len), math.ceil(total_w / max_40_wt))
+            for _ in range(est):
+                group_bins.append({'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
+                                   'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()})
+                c_no += 1
+        for piece in pieces:
+            placed = False
+            if use_balancing:
+                group_bins.sort(key=lambda b: (0 if piece['GROUP'] in b['groups'] else 1, b['used_L']))
+            for b in group_bins:
+                pack_items_into_bin([piece], b, max_40_wt, max_40_len)
+                if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
+                    placed = True; break
+            if not placed:
+                new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
+                           'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                pack_items_into_bin([piece], new_bin, max_40_wt, max_40_len)
+                group_bins.append(new_bin); c_no += 1
+        group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
+        return group_bins, c_no
+
+    hc_bins,  c_no = _pack_group(hc_pieces, 1)
+    dry_bins, c_no = _pack_group(dry_pieces, c_no)
+    bins = hc_bins + dry_bins
+    for idx, b in enumerate(bins):
+        b['id'] = idx + 1
     return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430, max_dry_h, max_hc_h)
 
 # --- 3. 메인 화면 로직 ---
@@ -426,6 +444,13 @@ if file is not None:
                     if used_height > cur_max_h: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm <span style='color:{ALERT_COLOR};font-weight:bold;'>[OH +{used_height-cur_max_h:,}]</span>", unsafe_allow_html=True)
                     else: c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm"); c4.progress(min(1.0, used_height/cur_max_h))
                     
+                    # 범례 표시
+                    st.markdown(
+                        f"<span style='background:#e67e22;padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ HC 필요 (H>{max_dry_h}mm)</span>"
+                        f"&nbsp;&nbsp;"
+                        f"<span style='background:{ACCENT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ DRY 가능 (H≤{max_dry_h}mm)</span>",
+                        unsafe_allow_html=True
+                    )
                     fig = go.Figure()
                     fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
                     fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
@@ -433,8 +458,12 @@ if file is not None:
                     for r in b['rows']:
                         cy = (2350 - r['used_W']) / 2
                         for item in r['items']:
-                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.8, line=dict(color="white", width=1))
-                            fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
+                            # CLP 참고: HC 필요 화물(H > DRY 기준) → 주황, Dry 가능 → 파란색
+                            item_color = "#e67e22" if item['H'] > max_dry_h else ACCENT_COLOR
+                            fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=item_color, opacity=0.85, line=dict(color="white", width=1))
+                            fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2,
+                                text=f"{item['PKG NO']}<br><sub>H{item['H']}</sub>",
+                                showarrow=False, font=dict(color="white", size=9))
                             cy += item['W']
                         cx += r['max_L']
                     fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2800, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
