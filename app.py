@@ -12,6 +12,7 @@ st.set_page_config(page_title="CALT-LOGIS CLP System", layout="wide")
 MAIN_COLOR = "#001f3f"
 SUB_COLOR = "#f0f2f6"
 ACCENT_COLOR = "#007bff"
+ALERT_COLOR = "#e74c3c" # OH/OW 경고용 빨간색
 
 st.markdown(f"""
     <style>
@@ -267,25 +268,50 @@ if file is not None:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            with st.expander("👁️ 적재 단면도 및 점유율 확인 (클릭하여 펼치기)", expanded=False):
+            with st.expander("👁️ 적재 단면도 및 4대 제원(길이/중량/폭/높이) 확인 (클릭하여 펼치기)", expanded=False):
+                # 💡 추가: 폭과 높이, 길이에 대한 제원 기준 설정
                 cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                 cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
+                cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
+                std_width = 2350
                 
-                col_gauge1, col_gauge2 = st.columns(2)
-                with col_gauge1:
+                # 실제 점유 폭과 높이 계산
+                used_width = max([r['used_W'] for r in b['rows']] + [0])
+                max_stacked_h = max([s['H'] for s in b.get('stacked_items', [])] + [0])
+                used_height = b['max_H'] + max_stacked_h if b.get('stacked_items') else b['max_H']
+                
+                # 💡 4개 지표를 가로로 나란히 배치
+                col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+                
+                with col_g1:
                     st.markdown(f"**📏 길이 점유:** {b['used_L']:,} / {cur_max_l:,} mm")
                     st.progress(min(1.0, b['used_L']/cur_max_l))
-                with col_gauge2:
+                
+                with col_g2:
                     st.markdown(f"**⚖️ 중량 점유:** {b['total_W']:,} / {cur_max_w:,} kg")
                     st.progress(min(1.0, b['total_W']/cur_max_w))
                 
+                with col_g3:
+                    if used_width > std_width:
+                        st.markdown(f"**↔️ 폭 점유:** <span style='color:{ALERT_COLOR};font-weight:bold;'>OW (+{used_width - std_width:,} mm)</span>", unsafe_allow_html=True)
+                        st.progress(1.0)
+                    else:
+                        st.markdown(f"**↔️ 폭 점유:** {used_width:,} / {std_width:,} mm")
+                        st.progress(min(1.0, used_width/std_width))
+                        
+                with col_g4:
+                    if used_height > cur_max_h:
+                        st.markdown(f"**↕️ 높이 점유:** <span style='color:{ALERT_COLOR};font-weight:bold;'>OH (+{used_height - cur_max_h:,} mm)</span>", unsafe_allow_html=True)
+                        st.progress(1.0)
+                    else:
+                        st.markdown(f"**↕️ 높이 점유:** {used_height:,} / {cur_max_h:,} mm")
+                        st.progress(min(1.0, used_height/cur_max_h))
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
                 # 도면 시각화
                 fig = go.Figure()
-                
-                # 💡 수정 1: 컨테이너의 빈 공간을 옅은 회색으로 표시하여 시각적 대비 확보
                 fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=2350, fillcolor="#e1e4e8", opacity=0.4, line_width=0)
-                
-                # 컨테이너 외곽선
                 fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=2350, line=dict(color=MAIN_COLOR, width=2))
                 
                 cx = 0
@@ -295,17 +321,17 @@ if file is not None:
                         fig.add_shape(type="rect", x0=cx, y0=cy, x1=cx+item['L'], y1=cy+item['W'], fillcolor=ACCENT_COLOR, opacity=0.8, line=dict(color="white", width=1))
                         fig.add_annotation(x=cx+item['L']/2, y=cy+item['W']/2, text=str(item['PKG NO']), showarrow=False, font=dict(color="white", size=10))
                         cy += item['W']
-                    cx += r['max_L'] # 불필요한 시각적 50mm 간격을 제거하여 실제 계산된 used_L과 일치시킴
+                    cx += r['max_L']
                 
-                # 💡 수정 2: 적재 완료 지점에 빨간색 점선 및 텍스트 어노테이션 추가
-                fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2550, line=dict(color="#e74c3c", width=2, dash="dash"))
+                # 길이 점선 및 잔여 공간 텍스트
+                fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=2550, line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                 
                 if b['used_L'] > 300:
                     fig.add_annotation(x=b['used_L']/2, y=-300, text=f"적재됨: {b['used_L']:,}mm", showarrow=False, font=dict(color=MAIN_COLOR, size=12, weight="bold"))
                 if cur_max_l - b['used_L'] > 300:
-                    fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=-300, text=f"잔여 공간: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color="#e74c3c", size=12, weight="bold"))
+                    fig.add_annotation(x=b['used_L'] + (cur_max_l - b['used_L'])/2, y=-300, text=f"잔여 공간: {cur_max_l - b['used_L']:,}mm", showarrow=False, font=dict(color=ALERT_COLOR, size=12, weight="bold"))
                 
-                # 💡 수정 3: x축의 최대 범위를 무조건 40ft 기준으로 픽스 (20ft는 절반만 차지하여 직관적으로 확인 가능)
+                # x축의 최대 범위를 무조건 40ft 기준으로 픽스
                 fig.update_layout(
                     xaxis=dict(visible=False, range=[-200, max_40_len + 400]), 
                     yaxis=dict(visible=False, range=[-500, 2600]), 
