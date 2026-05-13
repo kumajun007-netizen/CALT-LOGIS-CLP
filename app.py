@@ -200,8 +200,7 @@ with st.sidebar:
         "📐 적재 방식",
         ["일반 (효율 최적)", "LSE (포크방향 고정)"],
         index=0, key="load_mode",
-        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물)
-일반: L 소비 최소 자동 최적화"
+        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
     )
     lse_mode = (load_mode == "LSE (포크방향 고정)")
 
