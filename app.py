@@ -211,25 +211,24 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
-        # 스태킹 가능 여부: 일반 모드(자유) or REMARK 단수 지정
         can_stack = allow_free_stack or max_stk > 1
         if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             base_n = sum(len(r['items']) for r in b['rows'])
             stk_n  = len(b.get('stacked_items', []))
-            projected_h = b['max_H'] + piece['H']
+            # 누적 스태킹 높이 계산: 현재 단수 × 화물 높이 + 바닥 높이
+            current_layer = stk_n // max(1, base_n)
+            projected_h = b['max_H'] + (current_layer + 1) * piece['H']
             if max_h and projected_h > max_h:
                 pass  # 높이 초과 → 일반 배치
             elif base_n > 0:
                 if allow_free_stack and max_stk == 1:
-                    # 일반 모드 자유 스태킹: 높이만 체크
+                    # 일반 모드 자유 스태킹: 누적 높이만 체크
                     if 'stacked_items' not in b: b['stacked_items'] = []
                     b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                     b['groups'].add(piece['GROUP']); placed = True
                     continue
                 else:
-                    # REMARK 단수 지정: 비율 체크 (stk_n//base_n < max_stk-1)
-                    # stack_base_n 고정 방식 폐기 → 동적 base_n 비율 체크
-                    current_layer = stk_n // max(1, base_n)
+                    # REMARK 단수 지정: 비율 체크
                     if current_layer < (max_stk - 1):
                         if 'stacked_items' not in b: b['stacked_items'] = []
                         b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
@@ -258,7 +257,16 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
         is_20ft_size  = b['used_L'] <= max_20_len  and b['total_W'] <= max_20_wt
         is_20fr_size  = b['used_L'] <= max_fr20_len and b['total_W'] <= max_fr20_wt
         is_ow = b['max_W'] > 2340
-        is_oh = b['max_H'] > max_hc_h
+        # OH 판단: 단적 포함 실제 누적 높이로 체크
+        _base_items = [i for r in b['rows'] for i in r['items']]
+        _stk_items  = b.get('stacked_items', [])
+        if _stk_items and _base_items:
+            _stk_layers = math.ceil(len(_stk_items) / max(1, len(_base_items)))
+            _max_stk_h  = max((s['H'] for s in _stk_items), default=0)
+            _effective_h = b['max_H'] + _stk_layers * _max_stk_h
+        else:
+            _effective_h = b['max_H']
+        is_oh = _effective_h > max_hc_h
         tags = []
         if is_oh: tags.append("OH")
         if is_ow: tags.append("OW")
