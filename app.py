@@ -142,7 +142,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
 
-    # Step2: 방향 최적화 (나란히 L소비 최소 + HC/Dry 분리)
+    # Step2: 방향 결정
+    # - 일반(DRY/HC) 화물: 긴쪽 → W방향 고정 (포크 진입 방향 고려)
+    # - FR 사이즈 화물(OW/OH): 4방향 자유 → L소비 최소 효율 최적
     sg={}
     for p in raw:
         key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h)
@@ -150,12 +152,19 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces=[]
     for (s,lg,_),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
-        if ca and cb:
-            sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
-            La=math.ceil(n/sa)*s; Lb=math.ceil(n/sb)*lg
-            el,ew=(lg,s) if (Lb<La and sb>=2) else (s,lg)
-        elif cb: el,ew=lg,s
-        else: el,ew=s,lg
+        # FR 사이즈 여부 (OW 또는 OH)
+        is_fr_size = lg>2340 or items[0]['H']>max_hc_h
+        if is_fr_size:
+            # FR: 효율 최적 (L소비 최소)
+            if ca and cb:
+                sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
+                La=math.ceil(n/sa)*s; Lb=math.ceil(n/sb)*lg
+                el,ew=(lg,s) if (Lb<La and sb>=2) else (s,lg)
+            elif cb: el,ew=lg,s
+            else: el,ew=s,lg
+        else:
+            # 일반 DRY/HC: 긴쪽 → W (컨테이너 폭방향)
+            el,ew=(s,lg) if ca else (lg,s)
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
     # Step3: 등급 분류
