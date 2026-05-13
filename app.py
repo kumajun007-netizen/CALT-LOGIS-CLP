@@ -448,7 +448,7 @@ if file is not None:
             weight_v = clean_num(row[8])   # I열: GROSS WEIGHT
 
             # O열: REMARK
-            remark_raw = str(row[14]).strip().upper() if (len(row) > 14 and pd.notna(row[14])) else ""
+            remark_raw = str(row[14]).strip().upper() if (14 in row.index and pd.notna(row[14])) else ""
             remark_keys = [k.strip() for k in remark_raw.replace('，', ',').split(',')]
 
             is_box   = 'BOX' in remark_keys
