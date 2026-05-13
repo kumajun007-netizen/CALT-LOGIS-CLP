@@ -174,6 +174,14 @@ with st.sidebar:
         )
 
     st.header("⚙️ 배정 옵션 설정")
+    load_mode = st.radio(
+        "📐 적재 방식",
+        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
+        index=0, key="load_mode",
+        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
+    )
+    lse_mode = (load_mode == "LSE (포크방향 고정)")
+    st.markdown("---")
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
         st.markdown("**🟦 20ft DRY**")
         max_20_wt  = st.number_input("최대 중량 (kg)",  15000, 40000, 28250, key="i_20wt")
@@ -195,15 +203,6 @@ with st.sidebar:
         max_fr40_wt  = st.number_input("최대 중량 (kg)",  10000, 45000, 30000, key="i_fr40wt")
         max_fr40_len = st.number_input("최대 길이 (mm)",  8000,  14000, 11600, key="i_fr40len")
 
-    st.markdown("---")
-    load_mode = st.radio(
-        "📐 적재 방식",
-        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
-        index=0, key="load_mode",
-        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
-    )
-    lse_mode = (load_mode == "LSE (포크방향 고정)")
-
     if st.button("🔄 AI 재계산 실행"):
         st.session_state['manual_mode'] = False
 
@@ -217,11 +216,14 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None):
         if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             base_n = sum(len(r['items']) for r in b['rows'])
             stk_n  = len(b.get('stacked_items', []))
-            if base_n > 0 and stk_n < (max_stk - 1) * base_n:
-                # 높이 초과 시 stacked 거부 → FR로 넘어가는 것 방지
+            # 최초 스태킹 시작 시 base_n 고정 → 새 행 추가로 한도 재개방 방지
+            if stk_n == 0 and base_n > 0:
+                b['stack_base_n'] = base_n
+            locked_base = b.get('stack_base_n', base_n)
+            if locked_base > 0 and stk_n < (max_stk - 1) * locked_base:
                 projected_h = b['max_H'] + piece['H']
                 if max_h and projected_h > max_h:
-                    pass  # 높이 초과 → 일반 배치로 진행
+                    pass
                 else:
                     if 'stacked_items' not in b: b['stacked_items'] = []
                     b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
