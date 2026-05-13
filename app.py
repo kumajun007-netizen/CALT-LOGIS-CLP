@@ -447,16 +447,13 @@ if file is not None:
             h_v      = clean_num(row[13])  # N열: HEIGHT
             weight_v = clean_num(row[8])   # I열: GROSS WEIGHT
 
-            # O열: REMARK, P열: LOAD (없으면 빈 문자열)
+            # O열: REMARK
             remark_raw = str(row[14]).strip().upper() if (len(row) > 14 and pd.notna(row[14])) else ""
             remark_keys = [k.strip() for k in remark_raw.replace('，', ',').split(',')]
-            load_raw    = str(row[15]).strip().upper() if (len(row) > 15 and pd.notna(row[15])) else ""
 
             is_box   = 'BOX' in remark_keys
             max_stk  = 3 if '3단' in remark_keys else (2 if '2단' in remark_keys else 1)
             stack_ok = max_stk > 1
-            # LOAD 키워드: FORK_L / FORK_W / 4WAY (없으면 None → 토글 따라감)
-            fork_dir = load_raw if load_raw in ('FORK_L', 'FORK_W', '4WAY') else None
 
             # PKG NO와 치수(LWH)만 필수값으로 체크
             if not pkg_v or pkg_v.lower() in ['nan', 'none', '.', ''] or l_v == 0 or w_v == 0 or h_v == 0:
@@ -476,7 +473,6 @@ if file is not None:
                     'WEIGHT'  : weight_v,
                     'STACK_OK': stack_ok,
                     'MAX_STK' : max_stk,
-                    'FORK_DIR': fork_dir,   # FORK_L / FORK_W / 4WAY / None
                     'row_idx' : int(row['orig_idx'])
                 })
 
