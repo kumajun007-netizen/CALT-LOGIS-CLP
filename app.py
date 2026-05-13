@@ -237,6 +237,7 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free
                         b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                         b['groups'].add(piece['GROUP']); placed = True
                         continue
+        row_found = False
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
             if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
