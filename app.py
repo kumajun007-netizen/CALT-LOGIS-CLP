@@ -143,8 +143,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
 
     # Step2: 방향 결정
-    # - 일반(DRY/HC) 화물: 긴쪽 → W방향 고정 (포크 진입 방향 고려)
-    # - FR 사이즈 화물(OW/OH): 4방향 자유 → L소비 최소 효율 최적
     sg={}
     for p in raw:
         key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h)
@@ -152,10 +150,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces=[]
     for (s,lg,_),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
-        # FR 사이즈 여부 (OW 또는 OH)
         is_fr_size = lg>2340 or items[0]['H']>max_hc_h
         if is_fr_size:
-            # FR: 효율 최적 (L소비 최소)
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
                 La=math.ceil(n/sa)*s; Lb=math.ceil(n/sb)*lg
@@ -163,7 +159,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             elif cb: el,ew=lg,s
             else: el,ew=s,lg
         else:
-            # 일반 DRY/HC: 긴쪽 → W (컨테이너 폭방향)
             el,ew=(s,lg) if ca else (lg,s)
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
@@ -229,6 +224,7 @@ if file is not None:
             best=0
             for sn,sd in sheets.items():
                 if sn=='사용설명서': continue
+                if sd.shape[1] <= COL_H: continue  # 열 부족으로 인한 크래시 방지
                 cnt=sum(1 for _,r in sd.iterrows() if
                     str(r.iloc[COL_PKG] if pd.notna(r.iloc[COL_PKG]) else '').strip().lower() not in ['','nan','none','.']
                     and clean_num(r.iloc[COL_L])>0 and clean_num(r.iloc[COL_W])>0 and clean_num(r.iloc[COL_H])>0)
@@ -241,22 +237,23 @@ if file is not None:
         p_data=[]
         for oi in range(len(raw_full)):
             row=raw_full.iloc[oi]
+            if len(row) <= COL_H: continue # 짧은 행 무시
             try:
                 pkg=str(row.iloc[COL_PKG]).replace('00:00:00','').replace('.0','').strip() if pd.notna(row.iloc[COL_PKG]) else ""
                 lv=clean_num(row.iloc[COL_L]); wv=clean_num(row.iloc[COL_W]); hv=clean_num(row.iloc[COL_H])
                 if pkg.lower() in ['','nan','none','.'] or lv==0 or wv==0 or hv==0: continue
-                wtv=clean_num(row.iloc[COL_WEIGHT])
-                qty=int(clean_num(row.iloc[COL_QTY])) if clean_num(row.iloc[COL_QTY])>0 else 1
-                rem=str(row.iloc[COL_REMARK]).strip().upper() if (COL_REMARK<len(row) and pd.notna(row.iloc[COL_REMARK])) else ""
+                wtv=clean_num(row.iloc[COL_WEIGHT]) if len(row) > COL_WEIGHT else 0
+                qty=int(clean_num(row.iloc[COL_QTY])) if (len(row) > COL_QTY and clean_num(row.iloc[COL_QTY])>0) else 1
+                rem=str(row.iloc[COL_REMARK]).strip().upper() if (len(row) > COL_REMARK and pd.notna(row.iloc[COL_REMARK])) else ""
                 rkeys=[k.strip() for k in rem.replace('，',',').split(',')]
                 is_box='BOX' in rkeys
                 ms=3 if '3단' in rkeys else (2 if '2단' in rkeys else 1)
                 repeat=qty if is_box else 1
                 for seq in range(repeat):
                     sfx=f"-{seq+1:03d}" if repeat>1 else ""
-                    p_data.append({'PKG NO':f"{pkg}{sfx}",'GROUP':str(row.iloc[COL_DESC]) if pd.notna(row.iloc[COL_DESC]) else "-",
-                        'ITEM':str(row.iloc[COL_ITEM]) if pd.notna(row.iloc[COL_ITEM]) else "-",
-                        'DESC':str(row.iloc[COL_DESC]) if pd.notna(row.iloc[COL_DESC]) else "-",
+                    p_data.append({'PKG NO':f"{pkg}{sfx}",'GROUP':str(row.iloc[COL_DESC]) if (len(row) > COL_DESC and pd.notna(row.iloc[COL_DESC])) else "-",
+                        'ITEM':str(row.iloc[COL_ITEM]) if (len(row) > COL_ITEM and pd.notna(row.iloc[COL_ITEM])) else "-",
+                        'DESC':str(row.iloc[COL_DESC]) if (len(row) > COL_DESC and pd.notna(row.iloc[COL_DESC])) else "-",
                         'L':lv,'W':wv,'H':hv,'WEIGHT':wtv,'MAX_STK':ms,'STACK_OK':ms>1,'row_idx':int(oi)})
             except: continue
 
@@ -283,7 +280,7 @@ if file is not None:
             c1,c2,c3,c4=st.columns(4)
             packed=sum(len(r['items']) for b in bins for r in b['rows'])+sum(len(b.get('stacked_items',[])) for b in bins)
             c1.metric("전체 화물",f"{len(df)} PKG"); c2.metric("배정 완료",f"{packed} PKG")
-            c3.metric("컨테이너 수",f"{len(bins)} UNIT"); c4.metric("평균 중량",f"{sum(b['total_W'] for b in bins)/len(bins):,.0f} kg")
+            c3.metric("컨테이너 수",f"{len(bins)} UNIT"); c4.metric("평균 중량",f"{sum(b['total_W'] for b in bins)/max(1, len(bins)):,.0f} kg")
 
             for b in bins:
                 if b['used_L']==0 and not b.get('stacked_items'): continue
@@ -313,8 +310,8 @@ if file is not None:
                         ob={'id':mid+1,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                         for it in ov: pack_items_into_bin([it],ob,max_40_wt,max_40_len)
                         upd.append(ob)
-                        st.warning(f"⚠️ {len(ov)}개 화물 제원 초과 → 새 컨테이너 #{mid+1}로 분리")
-                    if h_ex: st.error(f"🚨 {len(h_ex)}개 화물 H 초과. CLP 작성 시 확인하세요.")
+                        st.toast(f"⚠️ {len(ov)}개 화물 제원 초과 → 새 컨테이너 #{mid+1}로 분리됐습니다.")
+                    if h_ex: st.toast(f"🚨 {len(h_ex)}개 화물 H 초과! CLP 작성 시 확인하세요.")
                     st.session_state.bins=apply_labels(sorted(upd,key=lambda x:x['id']),
                         max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
                     st.rerun()
@@ -370,7 +367,6 @@ if file is not None:
                     if uh>cmh: cc4.markdown(f"**↕️ 높이:** {uh:,}/{cmh:,}mm <span style='color:{ALERT_COLOR};font-weight:bold;'>[OH +{uh-cmh:,}]</span>",unsafe_allow_html=True)
                     else: cc4.markdown(f"**↕️ 높이:** {uh:,}/{cmh:,}mm"); cc4.progress(min(1.0,uh/cmh))
 
-                    # 범례
                     st.markdown(f"<span style='background:{ALERT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ FR (OW/OH)</span>&nbsp;&nbsp;"
                         f"<span style='background:#e67e22;padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ HC (H>{max_dry_h}mm)</span>&nbsp;&nbsp;"
                         f"<span style='background:{ACCENT_COLOR};padding:2px 8px;border-radius:4px;color:white;font-size:12px;'>■ DRY (H≤{max_dry_h}mm)</span>",
@@ -393,10 +389,9 @@ if file is not None:
                             else: ic=ACCENT_COLOR
                             border=dict(color="#FFD700",width=3) if layers>1 else dict(color="white",width=1)
                             fig.add_shape(type="rect",x0=cx,y0=cy,x1=cx+item['L'],y1=cy+item['W'],fillcolor=ic,opacity=0.85,line=border)
-                            if layers>1:
-                                lbl_txt=f"×{layers}단\n{item['PKG NO']}\nH{item['H']}"
-                            else:
-                                lbl_txt=f"{item['PKG NO']}\nH{item['H']}"
+                            # 단면도 텍스트 HTML 브레이크 적용 (오류 수정)
+                            if layers>1: lbl_txt=f"×{layers}단<br>{item['PKG NO']}<br>H{item['H']}"
+                            else:        lbl_txt=f"{item['PKG NO']}<br>H{item['H']}"
                             fig.add_annotation(x=cx+item['L']/2,y=cy+item['W']/2,text=lbl_txt,showarrow=False,font=dict(color="white",size=9))
                             cy+=item['W']
                         cx+=r['max_L']
@@ -423,10 +418,13 @@ if file is not None:
             if file.name.endswith('.xlsx'):
                 file.seek(0); wb=load_workbook(file); ws=wb[selected_sheet]
                 tc=ws.max_column+1; tl=ws.cell(row=1,column=tc).column_letter
-                ws.cell(row=4,column=tc).value="배정 컨테이너"
-                if tc>1:
-                    sc=ws.cell(row=4,column=tc-1); dc=ws.cell(row=4,column=tc)
-                    dc.font=copy(sc.font); dc.fill=copy(sc.fill); dc.border=copy(sc.border); dc.alignment=copy(sc.alignment)
+                # 파일의 행수가 4행 미만인 경우 에러 방지 처리
+                if ws.max_row >= 4:
+                    ws.cell(row=4,column=tc).value="배정 컨테이너"
+                    if tc>1:
+                        sc=ws.cell(row=4,column=tc-1); dc=ws.cell(row=4,column=tc)
+                        dc.font=copy(sc.font); dc.fill=copy(sc.fill); dc.border=copy(sc.border); dc.alignment=copy(sc.alignment)
+                
                 for ri,label in mapping.items():
                     er=int(ri)+1; ws.cell(row=er,column=tc).value=label
                     if tc>1:
