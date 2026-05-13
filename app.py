@@ -200,10 +200,22 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 # --- 짐 배치 로직 (이전과 동일하지만 입력 정렬 및 혼적 유지) ---
-def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free_stack=False):
-    """base(rows) 배치 전용. 스태킹은 post_stack_bins() 후처리에서 처리."""
+def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None):
     for piece in pieces:
         placed = False
+        # ── 다단 적재: REMARK 2단/3단 지정 시 높이 한도 내 허용
+        max_stk = piece.get('MAX_STK', 1)
+        if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+            base_n = sum(len(r['items']) for r in b['rows'])
+            stk_n  = len(b.get('stacked_items', []))
+            projected_h = b['max_H'] + piece['H']
+            if max_h and projected_h > max_h:
+                pass  # 높이 초과 → 바닥 배치
+            elif base_n > 0 and (stk_n // max(1, base_n)) < (max_stk - 1):
+                if 'stacked_items' not in b: b['stacked_items'] = []
+                b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
+                b['groups'].add(piece['GROUP']); placed = True
+                continue
         row_found = False
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
@@ -311,55 +323,19 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             return [], c_no_start
         c_no = c_no_start
         group_bins = []
-        pieces_sorted = sorted(pieces, key=lambda x: (-x['W'], -x['H'], -x['L']))
-        for piece in pieces_sorted:
+        for piece in pieces:
             placed = False
             for b in group_bins:
-                pack_items_into_bin([piece], b, _wt, _len)
-                if any(piece in r['items'] for r in b['rows']):
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
+                if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
                     placed = True; break
             if not placed:
                 new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
                            'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                pack_items_into_bin([piece], new_bin, _wt, _len)
+                pack_items_into_bin([piece], new_bin, _wt, _len, max_hc_h)
                 group_bins.append(new_bin); c_no += 1
-        group_bins = [b for b in group_bins if b['used_L'] > 0]
-        # 스태킹 후처리: base 배치 완료 후 REMARK 단수 기준 stacked 분리
-        _post_stack(group_bins, _wt, _len)
+        group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
         return group_bins, c_no
-
-    def _post_stack(group_bins, _wt, _len):
-        from collections import defaultdict
-        for b in group_bins:
-            all_base = [i for r in b['rows'] for i in r['items']]
-            if not all_base:
-                continue
-            groups = defaultdict(list)
-            for item in all_base:
-                ms = item.get('MAX_STK', 1)
-                if ms > 1:
-                    groups[(item['L'], item['W'], item['H'], ms)].append(item)
-            for (l, w, h, ms), items in groups.items():
-                max_h_layers = int(max_hc_h / h) if h > 0 else ms
-                effective = min(ms, max_h_layers)
-                if effective <= 1:
-                    continue
-                n = len(items)
-                keep = math.ceil(n / effective)
-                for item in items[keep:]:
-                    for r in b['rows']:
-                        if item in r['items']:
-                            r['items'].remove(item)
-                            r['used_W'] -= item['W']
-                            break
-                    b['stacked_items'].append(item)
-            # 재압축
-            remaining = sorted([i for r in b['rows'] for i in r['items']],
-                               key=lambda x: (-x['W'], -x['L']))
-            b['rows'] = []; b['used_L'] = 0; b['max_W'] = 0; b['max_H'] = 0
-            b['groups'] = set()
-            b['total_W'] = sum(s['WEIGHT'] for s in b.get('stacked_items', []))
-            pack_items_into_bin(remaining, b, _wt, _len)
 
     def _fill_gaps(bins, candidates, p_max_wt=None, p_max_len=None):
         """bin의 남는 L 공간에 candidates를 채워 넣고, 배치된 화물을 제거한 나머지 반환"""
@@ -368,9 +344,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         remaining = list(candidates)
         for b in sorted(bins, key=lambda x: x['used_L']):
             for piece in list(remaining):
-                before = sum(len(r['items']) for r in b['rows'])
-                pack_items_into_bin([piece], b, _wt, _len)
-                after  = sum(len(r['items']) for r in b['rows'])
+                before = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
+                after  = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
                 if after > before:
                     remaining.remove(piece)
         return remaining
