@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import math
 import os
 import io
+import re  # 💡 추가: 단수 자동 인식을 위한 정규식 모듈
 from openpyxl import load_workbook
 from copy import copy
 
@@ -50,8 +51,8 @@ with st.sidebar:
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
 <b>REMARK 키워드</b><br>
 · <b>BOX</b> : Q'ty = 실제 박스 수<br>
-· <b>2단 / 3단</b> : 다단 적재 허용 (높이 한도 내)<br>
-· 복합 예시: <code>BOX 2단</code>, <code>3단 BOX</code>
+· <b>N단</b> (예: 2단, 5단) : 숫자만큼 다단적재<br>
+· 복합 예시: <code>BOX 3단</code>, <code>5단 BOX</code>
 </div>
 <p style='font-size:11px;color:gray;margin-top:8px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>""", unsafe_allow_html=True)
         st.markdown("---")
@@ -90,32 +91,48 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 
-# ── 배치 함수
-def pack_items_into_bin(pieces, b, max_wt, max_len):
+# ── 배치 함수 (다단적재 버그 수정 완료)
+def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
+        
+        # 1. 다단 적재 시도 (동일한 L, W, H를 가진 화물끼리만 짝지어 계산)
         if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_wt:
-            base_n = sum(len(r['items']) for r in b['rows'])
-            stk_n  = len(b.get('stacked_items', []))
-            if b['max_H'] + piece['H'] <= max_hc_h and base_n > 0 and stk_n < (max_stk - 1) * base_n:
-                if 'stacked_items' not in b: b['stacked_items'] = []
-                b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
-                b['groups'].add(piece['GROUP']); placed = True; continue
-        row_found = False
-        for r in b['rows']:
-            tL = max(r['max_L'], piece['L'])
-            if r['used_W']+piece['W']<=2340 and b['used_L']+(tL-r['max_L'])<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
-                r['items'].append(piece); r['used_W']+=piece['W']; b['used_L']+=(tL-r['max_L'])
-                r['max_L']=tL; b['total_W']+=piece['WEIGHT']
-                b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
-                b['groups'].add(piece['GROUP']); row_found=True; placed=True; break
-        if row_found: continue
-        if b['used_L']+piece['L']<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
-            b['rows'].append({'items':[piece],'used_W':piece['W'],'max_L':piece['L']})
-            b['used_L']+=piece['L']; b['total_W']+=piece['WEIGHT']
-            b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
-            b['groups'].add(piece['GROUP']); placed=True
+            dim = (piece['L'], piece['W'], piece['H'])
+            base_cnt = sum(1 for r in b['rows'] for i in r['items'] if (i['L'], i['W'], i['H']) == dim)
+            
+            if base_cnt > 0:
+                stk_cnt = sum(1 for s in b.get('stacked_items', []) if (s['L'], s['W'], s['H']) == dim)
+                
+                # 동일 규격의 바닥 화물이 소화할 수 있는 단수 할당량 검사
+                if stk_cnt < (max_stk - 1) * base_cnt:
+                    layers_will_be = 2 + (stk_cnt // base_cnt) 
+                    if piece['H'] * layers_will_be <= max_h: # 전체 높이 검사
+                        if 'stacked_items' not in b: b['stacked_items'] = []
+                        b['stacked_items'].append(piece)
+                        b['total_W'] += piece['WEIGHT']
+                        b['groups'].add(piece['GROUP'])
+                        placed = True
+                        continue
+                        
+        # 2. 바닥 적재 시도
+        if not placed:
+            row_found = False
+            for r in b['rows']:
+                tL = max(r['max_L'], piece['L'])
+                if r['used_W']+piece['W']<=2340 and b['used_L']+(tL-r['max_L'])<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
+                    r['items'].append(piece); r['used_W']+=piece['W']; b['used_L']+=(tL-r['max_L'])
+                    r['max_L']=tL; b['total_W']+=piece['WEIGHT']
+                    b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
+                    b['groups'].add(piece['GROUP']); row_found=True; placed=True; break
+            
+            if not row_found:
+                if b['used_L']+piece['L']<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
+                    b['rows'].append({'items':[piece],'used_W':piece['W'],'max_L':piece['L']})
+                    b['used_L']+=piece['L']; b['total_W']+=piece['WEIGHT']
+                    b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
+                    b['groups'].add(piece['GROUP']); placed=True
 
 
 def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt):
@@ -172,12 +189,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for piece in pieces:
             placed=False
             for b in bins:
-                pack_items_into_bin([piece],b,wt,ln)
+                pack_items_into_bin([piece],b,wt,ln,max_hc_h)
                 if piece in b.get('stacked_items',[]) or any(piece in r['items'] for r in b['rows']):
                     placed=True; break
             if not placed:
                 nb={'id':c,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                pack_items_into_bin([piece],nb,wt,ln); bins.append(nb); c+=1
+                pack_items_into_bin([piece],nb,wt,ln,max_hc_h); bins.append(nb); c+=1
         return [b for b in bins if b['used_L']>0 or b.get('stacked_items')], c
 
     def _fill(bins, cands, mwt=None, mlen=None):
@@ -186,7 +203,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for b in sorted(bins,key=lambda x:x['used_L']):
             for piece in list(rem):
                 before=sum(len(r['items']) for r in b['rows'])+len(b.get('stacked_items',[]))
-                pack_items_into_bin([piece],b,wt,ln)
+                pack_items_into_bin([piece],b,wt,ln,max_hc_h)
                 after=sum(len(r['items']) for r in b['rows'])+len(b.get('stacked_items',[]))
                 if after>before: rem.remove(piece)
         return rem
@@ -242,11 +259,13 @@ if file is not None:
                 wtv=clean_num(row.iloc[COL_WEIGHT]) if len(row) > COL_WEIGHT else 0
                 qty=int(clean_num(row.iloc[COL_QTY])) if (len(row) > COL_QTY and clean_num(row.iloc[COL_QTY])>0) else 1
                 
-                # --- REMARK 문자열 포함 방식 인식 로직 ---
-                rem=str(row.iloc[COL_REMARK]).strip().upper() if (len(row) > COL_REMARK and pd.notna(row.iloc[COL_REMARK])) else ""
+                # --- 💡 정규식을 이용한 스마트 REMARK 인식 ---
+                rem = str(row.iloc[COL_REMARK]).strip().upper() if (len(row) > COL_REMARK and pd.notna(row.iloc[COL_REMARK])) else ""
                 is_box = 'BOX' in rem
-                ms = 3 if '3단' in rem else (2 if '2단' in rem else 1)
-                # -----------------------------------------
+                # "2단", "5단", "10단" 등 숫자를 자동으로 추출합니다. 없으면 기본값 1단(floor)
+                match = re.search(r'(\d+)단', rem)
+                ms = int(match.group(1)) if match else 1
+                # ---------------------------------------------
                 
                 repeat=qty if is_box else 1
                 for seq in range(repeat):
@@ -297,7 +316,7 @@ if file is not None:
                     ov=[]
                     for it in all_it:
                         bf=sum(len(r['items']) for r in nb['rows'])+len(nb.get('stacked_items',[]))
-                        pack_items_into_bin([it],nb,sp['mw'],sp['ml'])
+                        pack_items_into_bin([it],nb,sp['mw'],sp['ml'],sp['mh'])
                         af=sum(len(r['items']) for r in nb['rows'])+len(nb.get('stacked_items',[]))
                         if af==bf: ov.append(it)
                     h_ex=[i for i in ([x for r in nb['rows'] for x in r['items']]+nb.get('stacked_items',[])) if i['H']>sp['mh']]
@@ -308,7 +327,7 @@ if file is not None:
                     if ov:
                         mid=max(bx['id'] for bx in upd)
                         ob={'id':mid+1,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                        for it in ov: pack_items_into_bin([it],ob,max_40_wt,max_40_len)
+                        for it in ov: pack_items_into_bin([it],ob,max_40_wt,max_40_len,max_hc_h)
                         upd.append(ob)
                         st.toast(f"⚠️ {len(ov)}개 화물 제원 초과 → 새 컨테이너 #{mid+1}로 분리됐습니다.")
                     if h_ex: st.toast(f"🚨 {len(h_ex)}개 화물 H 초과! CLP 작성 시 확인하세요.")
@@ -344,7 +363,7 @@ if file is not None:
                         nd={}
                         for item,tid in new_alloc:
                             if tid not in nd: nd[tid]={'id':tid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                            pack_items_into_bin([item],nd[tid],max_40_wt,max_40_len)
+                            pack_items_into_bin([item],nd[tid],max_40_wt,max_40_len,max_hc_h)
                         st.session_state.bins=apply_labels(sorted(nd.values(),key=lambda x:x['id']),
                             max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
                         st.rerun()
