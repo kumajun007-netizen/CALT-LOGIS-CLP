@@ -53,24 +53,30 @@ with st.sidebar:
 <tr><td style="color:#007bff;font-weight:bold;">LOAD방향</td><td style="color:#007bff;font-weight:bold;">P 열</td><td>선택</td></tr>
 </table>
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
+<b>REMARK 키워드</b><br>
+· <b>BOX</b> : Q'ty = 실제 박스 수<br>
+· <b>N단</b> (예: 2단, 5단) : 숫자만큼 다단적재<br>
+· 복합 예시: <code>BOX 3단</code>, <code>5단 BOX</code>
+</div>
+<div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
 <b>LOAD방향 제어 (P열)</b><br>
 · <b>FORK_W</b> : 긴 쪽을 컨테이너 폭으로 (지게차)<br>
 · <b>4WAY</b> : 효율 최우선 (방향 자유)<br>
 · <b>FORK_L</b> : 긴 쪽을 컨테이너 길이로
 </div>""", unsafe_allow_html=True)
         st.markdown("---")
+        # 💡 오타 수정 완료: "REMARK":[""]
         tpl = {"Invoice No":[""],"No.of PKG":["PKG-001"],"LOCATION":[""],"ITEM":["SAMPLE ITEM"],
                "Description of Goods":["DETAIL DESC"],"Q'ty":[1],"UNIT":["EA"],
                "Net Weight (kg)":[500],"Gross Weight (kg)":[550],
                "Dimension L (mm)":[1200],"X1":["X"],"Dimension W (mm)":[1000],"X2":["X"],
-               "Dimension H (mm)":[2300],"REMARK":["", ""],"LOAD":["FORK_W"]}
+               "Dimension H (mm)":[2300],"REMARK":[""],"LOAD":["FORK_W"]}
         tow=io.BytesIO(); pd.DataFrame(tpl).to_excel(tow,index=False,engine='openpyxl')
         st.download_button("📥 신규 화주용 양식 다운로드",tow.getvalue(),"CALT_CLP_TEMPLATE.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
     st.header("⚙️ 배정 옵션 설정")
     
-    # 💡 신규 추가: 적재 방향 전역 설정
     with st.expander("🔄 적재 방향 (LOAD) 설정", expanded=True):
         st.markdown("**일반 화물 기본 방향**")
         load_mode_ui = st.selectbox("포크 진입 방향 (기본값)", 
@@ -169,15 +175,14 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
 
     sg={}
-    # 💡 방향 제어 로직 적용 (LOAD 키워드 + FR 자동 최적화)
     for p in raw:
         rule = p.get('LOAD_KW', '')
         if rule not in ['FORK_W', 'FORK_L', '4WAY']:
-            rule = load_mode # UI에서 설정한 기본값 (FORK_W)
+            rule = load_mode 
         
         is_fr_size = max(p['L'], p['W']) > 2340 or p['H'] > max_hc_h
         if is_fr_size:
-            rule = '4WAY' # FR화물은 무조건 테트리스 최적화
+            rule = '4WAY' 
             
         p['eff_rule'] = rule
         key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h, rule)
@@ -188,9 +193,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         n=len(items); ca=lg<=2340; cb=s<=2340
         
         if rule == 'FORK_W':
-            el, ew = (s, lg) if ca else (lg, s) # 긴 쪽(lg)을 W로 배치
+            el, ew = (s, lg) if ca else (lg, s)
         elif rule == 'FORK_L':
-            el, ew = (lg, s) if cb else (s, lg) # 긴 쪽(lg)을 L로 배치
+            el, ew = (lg, s) if cb else (s, lg)
         else: # 4WAY
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
@@ -284,7 +289,6 @@ if file is not None:
                 match = re.search(r'(\d+)단', rem)
                 ms = int(match.group(1)) if match else 1
                 
-                # 💡 P열의 LOAD 방향 키워드 인식
                 load_val = str(row.iloc[COL_LOAD]).strip().upper() if (len(row) > COL_LOAD and pd.notna(row.iloc[COL_LOAD])) else ""
                 if "FORK_W" in load_val: load_kw = "FORK_W"
                 elif "FORK_L" in load_val: load_kw = "FORK_L"
