@@ -174,13 +174,6 @@ with st.sidebar:
         )
 
     st.header("⚙️ 배정 옵션 설정")
-    load_mode = st.radio(
-        "📐 적재 방식",
-        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
-        index=0, key="load_mode",
-        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
-    )
-    lse_mode = (load_mode == "LSE (포크방향 고정)")
     st.markdown("---")
     with st.expander("⚖️ 컨테이너 제원", expanded=True):
         st.markdown("**🟦 20ft DRY**")
@@ -257,18 +250,19 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
             base = "20ft Flat Rack" if is_20fr_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
-            # 단적 포함 실제 높이 계산 → HC 필요 여부 정확 판단
+            # 단적 포함 치수별 실제 높이로 HC/DRY 판단
+            # 서로 다른 치수가 섞인 bin에서 max 오버카운트 방지
             base_items = [i for r in b['rows'] for i in r['items']]
             stk_items  = b.get('stacked_items', [])
+            effective_h = b['max_H']  # 기본: 바닥 최대 높이
             if stk_items and base_items:
-                import math as _math
-                stk_layers   = _math.ceil(len(stk_items) / max(1, len(base_items)))
-                max_base_h   = max((i['H'] for i in base_items), default=0)
-                max_stk_h    = max((s['H'] for s in stk_items), default=0)
-                effective_h  = max_base_h + stk_layers * max_stk_h
-            else:
-                effective_h = b['max_H']
-            # effective_h > DRY 한도면 HC 필요, 그렇지 않으면 DRY
+                from collections import Counter as _C
+                base_h_cnt = _C(i['H'] for i in base_items)
+                stk_h_cnt  = _C(s['H'] for s in stk_items)
+                for h_val, stk_n in stk_h_cnt.items():
+                    b_n = base_h_cnt.get(h_val, max(1, len(base_items)))
+                    layers = 1 + math.ceil(stk_n / max(1, b_n))
+                    effective_h = max(effective_h, h_val * layers)
             if effective_h > max_dry_h: base = "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
@@ -466,8 +460,19 @@ def reset_data():
     if 'bins' in st.session_state: del st.session_state['bins']
     if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
 
-st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
-file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv', 'xlsx'], on_change=reset_data)
+col_up, col_mode = st.columns([3, 1])
+with col_up:
+    st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
+    file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv', 'xlsx'], on_change=reset_data)
+with col_mode:
+    st.markdown("### 📐 적재 방식")
+    load_mode = st.radio(
+        "적재 방식 선택",
+        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
+        index=0, key="load_mode", label_visibility="collapsed",
+        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
+    )
+    lse_mode = (load_mode == "LSE (포크방향 고정)")
 
 if file is not None:
     try:
@@ -661,18 +666,21 @@ if file is not None:
                         max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt
                     )
                     st.rerun()
-                # 바닥 화물 최소 L×W (하중 위험 판단 기준)
                 base_items = [item for r in b['rows'] for item in r['items']]
-                base_min_L = min((i['L'] for i in base_items), default=0)
-                base_min_W = min((i['W'] for i in base_items), default=0)
-
                 t_data = []
                 for r in b['rows']:
                     for item in r['items']:
                         t_data.append({**item, '위치': '바닥', '이동': f"{b['id']}번", '⚠️': ''})
                 for s in b.get('stacked_items', []):
-                    # 바닥 최솟값보다 L 또는 W가 크면 하중 위험
-                    danger = '🚨' if (s['L'] > base_min_L or s['W'] > base_min_W) else ''
+                    # 동일 치수 기준 비교: 다른 치수 화물이 아래에 있을 때만 경고
+                    same_dim = [i for i in base_items if i['L']==s['L'] and i['W']==s['W'] and i['H']==s['H']]
+                    if same_dim:
+                        danger = ''  # 동일 치수: 안전
+                    else:
+                        # 다른 치수 혼재 스태킹: 바닥 최솟값보다 크면 경고
+                        base_min_L = min((i['L'] for i in base_items), default=0)
+                        base_min_W = min((i['W'] for i in base_items), default=0)
+                        danger = '🚨' if (s['L'] > base_min_L or s['W'] > base_min_W) else ''
                     t_data.append({**s, '위치': '단적', '이동': f"{b['id']}번", '⚠️': danger})
 
                 df_edit = pd.DataFrame(t_data)[['⚠️', '위치', 'PKG NO', 'ITEM', 'L', 'W', 'H', 'WEIGHT', '이동']]
