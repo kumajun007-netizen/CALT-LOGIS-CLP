@@ -268,18 +268,16 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
-def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, lse_mode=False):
+def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h):
     # ── Step 1: 치수 정규화
     raw_pieces = []
     for _, row in df.iterrows():
         l, w, h, weight = int(row['L'] + 0.5), int(row['W'] + 0.5), int(row['H'] + 0.5), int(row['WEIGHT'] + 0.5)
         raw_pieces.append({**row.to_dict(), 'L': l, 'W': w, 'H': h, 'WEIGHT': weight})
 
-    # ── Step 2: 동일 크기 그룹핑 + 나란히 최적 방향 결정
-    # 같은 치수의 화물 N개를 배치할 때 컨테이너 L 소비가 최소인 방향 선택
+    # ── Step 2: L 소비 최소 방향 결정
     size_groups = {}
     for p in raw_pieces:
-        # HC 필요 여부를 키에 포함 → HC끼리, Dry끼리 각각 나란히 방향 최적화
         is_hc = p['H'] > max_dry_h
         key = (min(p['L'], p['W']), max(p['L'], p['W']), is_hc)
         size_groups.setdefault(key, []).append(p)
@@ -287,114 +285,34 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces = []
     for (s, lg, _), items in size_groups.items():
         n = len(items)
-        can_a = lg <= 2340   # 방향 A: el=s(짧은쪽→L), ew=lg(긴쪽→W)
-        can_b = s  <= 2340   # 방향 B: el=lg(긴쪽→L), ew=s(짧은쪽→W)
-
+        can_a = lg <= 2340
+        can_b = s  <= 2340
+        if can_a and can_b:
+            slots_a = max(1, int(2340 // lg))
+            slots_b = max(1, int(2340 // s))
+            L_a = math.ceil(n / slots_a) * s
+            L_b = math.ceil(n / slots_b) * lg
+            use_el, use_ew = (lg, s) if (L_b < L_a and slots_b >= 2) else (s, lg)
+        elif can_b: use_el, use_ew = lg, s
+        else:       use_el, use_ew = s, lg
         for p in items:
-            fork_dir = p.get('FORK_DIR')  # 개별 LOAD 키워드 우선
-            is_fr    = (p['W'] > 2340 or p['H'] > max_hc_h)  # FR 대형화물 여부
-
-            # ── 방향 결정 우선순위 ──────────────────────────────
-            # 1순위: 개별 FORK_DIR 키워드
-            # 2순위: FR 대형화물 → 4WAY (효율 최적)
-            # 3순위: FR bin 채우기용 DRY/HC 화물 → FORK_L (긴쪽→L)
-            # 4순위: LSE 모드 → FORK_W (긴쪽→W)
-            # 5순위: 일반 → L 소비 최소 자동
-
-            if fork_dir == 'FORK_W' or (fork_dir is None and lse_mode and not is_fr):
-                # 긴쪽 → W (LSE 기본, 포크가 긴쪽 구멍으로 진입)
-                use_el, use_ew = (s, lg) if can_a else (lg, s)
-
-            elif fork_dir == 'FORK_L':
-                # 긴쪽 → L
-                use_el, use_ew = (lg, s) if can_b else (s, lg)
-
-            elif fork_dir == '4WAY' or is_fr:
-                # 4방향 자유 → L 소비 최소 (일반 최적화)
-                if can_a and can_b:
-                    slots_a = max(1, int(2340 // lg))
-                    slots_b = max(1, int(2340 // s))
-                    L_a = math.ceil(n / slots_a) * s
-                    L_b = math.ceil(n / slots_b) * lg
-                    use_el, use_ew = (lg, s) if (L_b < L_a and slots_b >= 2) else (s, lg)
-                elif can_b: use_el, use_ew = lg, s
-                else:       use_el, use_ew = s, lg
-
-            else:
-                # 일반 모드 기본: L 소비 최소
-                if can_a and can_b:
-                    slots_a = max(1, int(2340 // lg))
-                    slots_b = max(1, int(2340 // s))
-                    L_a = math.ceil(n / slots_a) * s
-                    L_b = math.ceil(n / slots_b) * lg
-                    use_el, use_ew = (lg, s) if (L_b < L_a and slots_b >= 2) else (s, lg)
-                elif can_b: use_el, use_ew = lg, s
-                else:       use_el, use_ew = s, lg
-
             all_pieces.append({**p, 'L': use_el, 'W': use_ew})
-    # ── Step 3: 화물 등급 분류 (비용 절감 배치 원칙)
-    # 우선순위: FR(OW/OH) → HC → Dry
-    # 각 상위 등급 bin의 남는 공간에 하위 등급 화물을 채워 컨테이너 수 최소화
+
+    # ── Step 3: 화물 등급 분류
     sk = lambda x: (-x['W'], -x['H'], -x['L'], x['GROUP'])
     fr_pieces  = sorted([p for p in all_pieces if p['W'] > 2340 or p['H'] > max_hc_h],  key=sk)
     hc_pieces  = sorted([p for p in all_pieces if p['W'] <= 2340 and max_dry_h < p['H'] <= max_hc_h], key=sk)
     dry_pieces = sorted([p for p in all_pieces if p['W'] <= 2340 and p['H'] <= max_dry_h], key=sk)
-
-    def _split_base_stacked(pieces, allow_free):
-        """배치 전 base/stacked 분리 - base만 pack_group에 넣어 bin 수 최소화"""
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for p in pieces:
-            groups[(p['L'], p['W'], p['H'])].append(p)
-
-        base_list, stk_list = [], []
-        for (l, w, h), items in groups.items():
-            ms = max(i.get('MAX_STK', 1) for i in items)
-            if allow_free:
-                max_layers = int(max_hc_h / h) if h > 0 else 1
-                effective = max(ms, max_layers)   # free stacking: 높이 한도 최대
-            else:
-                max_layers_h = int(max_hc_h / h) if h > 0 else ms
-                effective = min(ms, max_layers_h) if ms > 1 else 1
-            effective = max(1, effective)
-            n = len(items)
-            keep = math.ceil(n / effective)
-            base_list.extend(items[:keep])
-            stk_list.extend(items[keep:])
-        return base_list, stk_list
-
-    def _assign_stacked(stk_list, group_bins):
-        """stacked 아이템을 동일 치수 base가 가장 많은 bin에 배정"""
-        from collections import Counter
-        for item in stk_list:
-            dim = (item['L'], item['W'], item['H'])
-            best, best_n = None, -1
-            for b in group_bins:
-                n = sum(1 for r in b['rows'] for i in r['items']
-                        if (i['L'], i['W'], i['H']) == dim)
-                if n > best_n:
-                    best_n, best = n, b
-            if best is None and group_bins:
-                best = group_bins[0]
-            if best:
-                best['stacked_items'].append(item)
-                best['total_W'] += item.get('WEIGHT', 0)
-                best['groups'].add(item.get('GROUP', '-'))
 
     def _pack_group(pieces, c_no_start, p_max_wt=None, p_max_len=None):
         _wt  = p_max_wt  or max_40_wt
         _len = p_max_len or max_40_len
         if not pieces:
             return [], c_no_start
-
-        # ① base / stacked 사전 분리 → bin 수 최소화
-        allow_free = not lse_mode
-        base_pieces, stk_pieces = _split_base_stacked(pieces, allow_free)
-        base_pieces.sort(key=lambda x: (-x['W'], -x['H'], -x['L']))
-
         c_no = c_no_start
         group_bins = []
-        for piece in base_pieces:
+        pieces_sorted = sorted(pieces, key=lambda x: (-x['W'], -x['H'], -x['L']))
+        for piece in pieces_sorted:
             placed = False
             for b in group_bins:
                 pack_items_into_bin([piece], b, _wt, _len)
@@ -406,10 +324,42 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
                 pack_items_into_bin([piece], new_bin, _wt, _len)
                 group_bins.append(new_bin); c_no += 1
         group_bins = [b for b in group_bins if b['used_L'] > 0]
-
-        # ② stacked 아이템을 적절한 bin에 배정
-        _assign_stacked(stk_pieces, group_bins)
+        # 스태킹 후처리: base 배치 완료 후 REMARK 단수 기준 stacked 분리
+        _post_stack(group_bins, _wt, _len)
         return group_bins, c_no
+
+    def _post_stack(group_bins, _wt, _len):
+        from collections import defaultdict
+        for b in group_bins:
+            all_base = [i for r in b['rows'] for i in r['items']]
+            if not all_base:
+                continue
+            groups = defaultdict(list)
+            for item in all_base:
+                ms = item.get('MAX_STK', 1)
+                if ms > 1:
+                    groups[(item['L'], item['W'], item['H'], ms)].append(item)
+            for (l, w, h, ms), items in groups.items():
+                max_h_layers = int(max_hc_h / h) if h > 0 else ms
+                effective = min(ms, max_h_layers)
+                if effective <= 1:
+                    continue
+                n = len(items)
+                keep = math.ceil(n / effective)
+                for item in items[keep:]:
+                    for r in b['rows']:
+                        if item in r['items']:
+                            r['items'].remove(item)
+                            r['used_W'] -= item['W']
+                            break
+                    b['stacked_items'].append(item)
+            # 재압축
+            remaining = sorted([i for r in b['rows'] for i in r['items']],
+                               key=lambda x: (-x['W'], -x['L']))
+            b['rows'] = []; b['used_L'] = 0; b['max_W'] = 0; b['max_H'] = 0
+            b['groups'] = set()
+            b['total_W'] = sum(s['WEIGHT'] for s in b.get('stacked_items', []))
+            pack_items_into_bin(remaining, b, _wt, _len)
 
     def _fill_gaps(bins, candidates, p_max_wt=None, p_max_len=None):
         """bin의 남는 L 공간에 candidates를 채워 넣고, 배치된 화물을 제거한 나머지 반환"""
@@ -447,21 +397,8 @@ def reset_data():
     if 'bins' in st.session_state: del st.session_state['bins']
     if 'manual_mode' in st.session_state: del st.session_state['manual_mode']
 
-col_up, col_mode = st.columns([3, 1])
-with col_up:
-    st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
-    file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv', 'xlsx'], on_change=reset_data)
-with col_mode:
-    st.markdown("### 📐 적재 방식")
-    load_mode = st.radio(
-        "적재 방식 선택",
-        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
-        index=0, key="load_mode", label_visibility="collapsed",
-        on_change=reset_data,
-        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물) / 일반: L 소비 최소 자동 최적화"
-    )
-    lse_mode = (load_mode == "LSE (포크방향 고정)")
-    st.caption("🔵 LSE 모드" if lse_mode else "⚪ 일반 모드")
+st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
+file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv', 'xlsx'], on_change=reset_data)
 
 if file is not None:
     try:
@@ -572,7 +509,7 @@ if file is not None:
             st.warning("⚠️ 지정된 열(B, J, L, N)에서 필수 데이터를 찾을 수 없습니다. 양식을 확인하세요.")
         else:
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
-                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, lse_mode)
+                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h)
                 st.session_state.manual_mode = True
 
             bins = st.session_state.bins
@@ -696,7 +633,6 @@ if file is not None:
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 제원 확인", expanded=False):
-                    st.caption(f"적재 방식: {'🔵 LSE (긴쪽→W)' if lse_mode else '⚪ 일반 (L소비 최적)'}")
                     # c_label 기반 정확한 제원 결정
                     _lbl = b['c_label']
                     if   '20ft Dry'       in _lbl: cur_max_l, cur_max_w, cur_max_h = max_20_len,   max_20_wt,   max_dry_h
