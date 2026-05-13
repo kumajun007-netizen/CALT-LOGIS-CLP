@@ -211,8 +211,7 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
-        # 일반 모드(allow_free_stack): 단수제한 없이 높이 한도만으로 스태킹
-        # REMARK 단수 지정: 지정된 단수 한도 내
+        # 스태킹 가능 여부: 일반 모드(자유) or REMARK 단수 지정
         can_stack = allow_free_stack or max_stk > 1
         if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             base_n = sum(len(r['items']) for r in b['rows'])
@@ -222,17 +221,16 @@ def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free
                 pass  # 높이 초과 → 일반 배치
             elif base_n > 0:
                 if allow_free_stack and max_stk == 1:
-                    # 일반 모드: 단수 무제한 (높이만 체크)
+                    # 일반 모드 자유 스태킹: 높이만 체크
                     if 'stacked_items' not in b: b['stacked_items'] = []
                     b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                     b['groups'].add(piece['GROUP']); placed = True
                     continue
                 else:
-                    # REMARK 단수 지정: stack_base_n 고정 후 한도 체크
-                    if stk_n == 0:
-                        b['stack_base_n'] = base_n
-                    locked_base = b.get('stack_base_n', base_n)
-                    if locked_base > 0 and stk_n < (max_stk - 1) * locked_base:
+                    # REMARK 단수 지정: 비율 체크 (stk_n//base_n < max_stk-1)
+                    # stack_base_n 고정 방식 폐기 → 동적 base_n 비율 체크
+                    current_layer = stk_n // max(1, base_n)
+                    if current_layer < (max_stk - 1):
                         if 'stacked_items' not in b: b['stacked_items'] = []
                         b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                         b['groups'].add(piece['GROUP']); placed = True
@@ -701,7 +699,7 @@ if file is not None:
                         cy = (2340 - r['used_W']) / 2
                         for item in r['items']:
                             dim = (item['L'], item['W'], item['H'])
-                            layers = 1 + stk_cnt.get(dim, 0) // max(1, base_cnt.get(dim, 1))
+                            layers = 1 + math.ceil(stk_cnt.get(dim, 0) / max(1, base_cnt.get(dim, 1)))
                             if item['W'] > 2340 or item['H'] > max_hc_h: item_color = ALERT_COLOR
                             elif item['H'] > max_dry_h: item_color = "#e67e22"
                             else: item_color = ACCENT_COLOR
