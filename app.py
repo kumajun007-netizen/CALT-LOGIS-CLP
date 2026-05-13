@@ -51,7 +51,7 @@ with st.sidebar:
 <b>REMARK 키워드</b><br>
 · <b>BOX</b> : Q'ty = 실제 박스 수<br>
 · <b>2단 / 3단</b> : 다단 적재 허용 (높이 한도 내)<br>
-· 복합 예시: <code>BOX, 2단</code>
+· 복합 예시: <code>BOX 2단</code>, <code>3단 BOX</code>
 </div>
 <p style='font-size:11px;color:gray;margin-top:8px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>""", unsafe_allow_html=True)
         st.markdown("---")
@@ -136,13 +136,11 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
 
 
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h):
-    # Step1: 정규화
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
 
-    # Step2: 방향 결정
     sg={}
     for p in raw:
         key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h)
@@ -162,7 +160,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             el,ew=(s,lg) if ca else (lg,s)
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    # Step3: 등급 분류
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'])
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
@@ -224,7 +221,7 @@ if file is not None:
             best=0
             for sn,sd in sheets.items():
                 if sn=='사용설명서': continue
-                if sd.shape[1] <= COL_H: continue  # 열 부족으로 인한 크래시 방지
+                if sd.shape[1] <= COL_H: continue  
                 cnt=sum(1 for _,r in sd.iterrows() if
                     str(r.iloc[COL_PKG] if pd.notna(r.iloc[COL_PKG]) else '').strip().lower() not in ['','nan','none','.']
                     and clean_num(r.iloc[COL_L])>0 and clean_num(r.iloc[COL_W])>0 and clean_num(r.iloc[COL_H])>0)
@@ -237,17 +234,20 @@ if file is not None:
         p_data=[]
         for oi in range(len(raw_full)):
             row=raw_full.iloc[oi]
-            if len(row) <= COL_H: continue # 짧은 행 무시
+            if len(row) <= COL_H: continue 
             try:
                 pkg=str(row.iloc[COL_PKG]).replace('00:00:00','').replace('.0','').strip() if pd.notna(row.iloc[COL_PKG]) else ""
                 lv=clean_num(row.iloc[COL_L]); wv=clean_num(row.iloc[COL_W]); hv=clean_num(row.iloc[COL_H])
                 if pkg.lower() in ['','nan','none','.'] or lv==0 or wv==0 or hv==0: continue
                 wtv=clean_num(row.iloc[COL_WEIGHT]) if len(row) > COL_WEIGHT else 0
                 qty=int(clean_num(row.iloc[COL_QTY])) if (len(row) > COL_QTY and clean_num(row.iloc[COL_QTY])>0) else 1
+                
+                # --- REMARK 문자열 포함 방식 인식 로직 ---
                 rem=str(row.iloc[COL_REMARK]).strip().upper() if (len(row) > COL_REMARK and pd.notna(row.iloc[COL_REMARK])) else ""
-                rkeys=[k.strip() for k in rem.replace('，',',').split(',')]
-                is_box='BOX' in rkeys
-                ms=3 if '3단' in rkeys else (2 if '2단' in rkeys else 1)
+                is_box = 'BOX' in rem
+                ms = 3 if '3단' in rem else (2 if '2단' in rem else 1)
+                # -----------------------------------------
+                
                 repeat=qty if is_box else 1
                 for seq in range(repeat):
                     sfx=f"-{seq+1:03d}" if repeat>1 else ""
@@ -389,7 +389,7 @@ if file is not None:
                             else: ic=ACCENT_COLOR
                             border=dict(color="#FFD700",width=3) if layers>1 else dict(color="white",width=1)
                             fig.add_shape(type="rect",x0=cx,y0=cy,x1=cx+item['L'],y1=cy+item['W'],fillcolor=ic,opacity=0.85,line=border)
-                            # 단면도 텍스트 HTML 브레이크 적용 (오류 수정)
+                            
                             if layers>1: lbl_txt=f"×{layers}단<br>{item['PKG NO']}<br>H{item['H']}"
                             else:        lbl_txt=f"{item['PKG NO']}<br>H{item['H']}"
                             fig.add_annotation(x=cx+item['L']/2,y=cy+item['W']/2,text=lbl_txt,showarrow=False,font=dict(color="white",size=9))
@@ -418,7 +418,6 @@ if file is not None:
             if file.name.endswith('.xlsx'):
                 file.seek(0); wb=load_workbook(file); ws=wb[selected_sheet]
                 tc=ws.max_column+1; tl=ws.cell(row=1,column=tc).column_letter
-                # 파일의 행수가 4행 미만인 경우 에러 방지 처리
                 if ws.max_row >= 4:
                     ws.cell(row=4,column=tc).value="배정 컨테이너"
                     if tc>1:
