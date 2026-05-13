@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import math
 import os
 import io
-import re  # 💡 추가: 단수 자동 인식을 위한 정규식 모듈
+import re
 from openpyxl import load_workbook
 from copy import copy
 
@@ -34,6 +34,10 @@ def clean_num(val):
         return float(str(val).replace(',','').strip())
     except: return 0.0
 
+def reset_data():
+    for k in ['bins','manual_mode']:
+        if k in st.session_state: del st.session_state[k]
+
 with st.sidebar:
     if os.path.exists("칼트로지스로고.png"): st.image("칼트로지스로고.png", use_column_width=True)
     with st.expander("📄 엑셀 업로드 표준 규격", expanded=True):
@@ -45,28 +49,39 @@ with st.sidebar:
 <tr class="essential"><td>HEIGHT (H)</td><td>N 열</td><td>[필수]</td></tr>
 <tr><td>GROSS WEIGHT</td><td>I 열</td><td>선택</td></tr>
 <tr><td>ITEM</td><td>D 열</td><td>참고</td></tr>
-<tr><td>DESCRIPTION</td><td>E 열</td><td>참고</td></tr>
 <tr><td>REMARK</td><td>O 열</td><td>선택</td></tr>
+<tr><td style="color:#007bff;font-weight:bold;">LOAD방향</td><td style="color:#007bff;font-weight:bold;">P 열</td><td>선택</td></tr>
 </table>
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
-<b>REMARK 키워드</b><br>
-· <b>BOX</b> : Q'ty = 실제 박스 수<br>
-· <b>N단</b> (예: 2단, 5단) : 숫자만큼 다단적재<br>
-· 복합 예시: <code>BOX 3단</code>, <code>5단 BOX</code>
-</div>
-<p style='font-size:11px;color:gray;margin-top:8px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>""", unsafe_allow_html=True)
+<b>LOAD방향 제어 (P열)</b><br>
+· <b>FORK_W</b> : 긴 쪽을 컨테이너 폭으로 (지게차)<br>
+· <b>4WAY</b> : 효율 최우선 (방향 자유)<br>
+· <b>FORK_L</b> : 긴 쪽을 컨테이너 길이로
+</div>""", unsafe_allow_html=True)
         st.markdown("---")
         tpl = {"Invoice No":[""],"No.of PKG":["PKG-001"],"LOCATION":[""],"ITEM":["SAMPLE ITEM"],
                "Description of Goods":["DETAIL DESC"],"Q'ty":[1],"UNIT":["EA"],
                "Net Weight (kg)":[500],"Gross Weight (kg)":[550],
                "Dimension L (mm)":[1200],"X1":["X"],"Dimension W (mm)":[1000],"X2":["X"],
-               "Dimension H (mm)":[2300],"REMARK":[""]}
+               "Dimension H (mm)":[2300],"REMARK":["", ""],"LOAD":["FORK_W"]}
         tow=io.BytesIO(); pd.DataFrame(tpl).to_excel(tow,index=False,engine='openpyxl')
         st.download_button("📥 신규 화주용 양식 다운로드",tow.getvalue(),"CALT_CLP_TEMPLATE.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
     st.header("⚙️ 배정 옵션 설정")
-    with st.expander("⚖️ 컨테이너 제원", expanded=True):
+    
+    # 💡 신규 추가: 적재 방향 전역 설정
+    with st.expander("🔄 적재 방향 (LOAD) 설정", expanded=True):
+        st.markdown("**일반 화물 기본 방향**")
+        load_mode_ui = st.selectbox("포크 진입 방향 (기본값)", 
+                                    ["FORK_W (긴 쪽을 폭 W방향으로)", 
+                                     "4WAY (공간 최소화 자동 최적화)", 
+                                     "FORK_L (긴 쪽을 길이 L방향으로)"],
+                                    on_change=reset_data)
+        default_load_mode = load_mode_ui.split(" ")[0]
+        st.caption("※ P열에 지정된 키워드가 있으면 개별 설정이 우선합니다.")
+
+    with st.expander("⚖️ 컨테이너 제원", expanded=False):
         st.markdown("**🟦 20ft DRY**")
         max_20_wt  = st.number_input("최대 중량 (kg)", 15000,40000,28250,key="i_20wt")
         max_20_len = st.number_input("최대 길이 (mm)", 5500,6500,5900,key="i_20len")
@@ -91,24 +106,20 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 
-# ── 배치 함수 (다단적재 버그 수정 완료)
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
         
-        # 1. 다단 적재 시도 (동일한 L, W, H를 가진 화물끼리만 짝지어 계산)
         if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_wt:
             dim = (piece['L'], piece['W'], piece['H'])
             base_cnt = sum(1 for r in b['rows'] for i in r['items'] if (i['L'], i['W'], i['H']) == dim)
             
             if base_cnt > 0:
                 stk_cnt = sum(1 for s in b.get('stacked_items', []) if (s['L'], s['W'], s['H']) == dim)
-                
-                # 동일 규격의 바닥 화물이 소화할 수 있는 단수 할당량 검사
                 if stk_cnt < (max_stk - 1) * base_cnt:
                     layers_will_be = 2 + (stk_cnt // base_cnt) 
-                    if piece['H'] * layers_will_be <= max_h: # 전체 높이 검사
+                    if piece['H'] * layers_will_be <= max_h:
                         if 'stacked_items' not in b: b['stacked_items'] = []
                         b['stacked_items'].append(piece)
                         b['total_W'] += piece['WEIGHT']
@@ -116,7 +127,6 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                         placed = True
                         continue
                         
-        # 2. 바닥 적재 시도
         if not placed:
             row_found = False
             for r in b['rows']:
@@ -152,29 +162,43 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
     return bins
 
 
-def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h):
+def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, load_mode):
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
 
     sg={}
+    # 💡 방향 제어 로직 적용 (LOAD 키워드 + FR 자동 최적화)
     for p in raw:
-        key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h)
-        sg.setdefault(key,[]).append(p)
-    all_pieces=[]
-    for (s,lg,_),items in sg.items():
-        n=len(items); ca=lg<=2340; cb=s<=2340
-        is_fr_size = lg>2340 or items[0]['H']>max_hc_h
+        rule = p.get('LOAD_KW', '')
+        if rule not in ['FORK_W', 'FORK_L', '4WAY']:
+            rule = load_mode # UI에서 설정한 기본값 (FORK_W)
+        
+        is_fr_size = max(p['L'], p['W']) > 2340 or p['H'] > max_hc_h
         if is_fr_size:
+            rule = '4WAY' # FR화물은 무조건 테트리스 최적화
+            
+        p['eff_rule'] = rule
+        key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h, rule)
+        sg.setdefault(key,[]).append(p)
+        
+    all_pieces=[]
+    for (s,lg,_,rule),items in sg.items():
+        n=len(items); ca=lg<=2340; cb=s<=2340
+        
+        if rule == 'FORK_W':
+            el, ew = (s, lg) if ca else (lg, s) # 긴 쪽(lg)을 W로 배치
+        elif rule == 'FORK_L':
+            el, ew = (lg, s) if cb else (s, lg) # 긴 쪽(lg)을 L로 배치
+        else: # 4WAY
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
                 La=math.ceil(n/sa)*s; Lb=math.ceil(n/sb)*lg
                 el,ew=(lg,s) if (Lb<La and sb>=2) else (s,lg)
             elif cb: el,ew=lg,s
             else: el,ew=s,lg
-        else:
-            el,ew=(s,lg) if ca else (lg,s)
+            
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'])
@@ -220,16 +244,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
 
 
-def reset_data():
-    for k in ['bins','manual_mode']:
-        if k in st.session_state: del st.session_state[k]
-
 st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
 file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv','xlsx'], on_change=reset_data)
 
 if file is not None:
     try:
-        COL_PKG=1;COL_ITEM=3;COL_DESC=4;COL_QTY=5;COL_WEIGHT=8;COL_L=9;COL_W=11;COL_H=13;COL_REMARK=14
+        COL_PKG=1;COL_ITEM=3;COL_DESC=4;COL_QTY=5;COL_WEIGHT=8;COL_L=9;COL_W=11;COL_H=13;COL_REMARK=14;COL_LOAD=15
         raw_full=None; selected_sheet=None
 
         if file.name.lower().endswith('.xlsx'):
@@ -259,13 +279,17 @@ if file is not None:
                 wtv=clean_num(row.iloc[COL_WEIGHT]) if len(row) > COL_WEIGHT else 0
                 qty=int(clean_num(row.iloc[COL_QTY])) if (len(row) > COL_QTY and clean_num(row.iloc[COL_QTY])>0) else 1
                 
-                # --- 💡 정규식을 이용한 스마트 REMARK 인식 ---
                 rem = str(row.iloc[COL_REMARK]).strip().upper() if (len(row) > COL_REMARK and pd.notna(row.iloc[COL_REMARK])) else ""
                 is_box = 'BOX' in rem
-                # "2단", "5단", "10단" 등 숫자를 자동으로 추출합니다. 없으면 기본값 1단(floor)
                 match = re.search(r'(\d+)단', rem)
                 ms = int(match.group(1)) if match else 1
-                # ---------------------------------------------
+                
+                # 💡 P열의 LOAD 방향 키워드 인식
+                load_val = str(row.iloc[COL_LOAD]).strip().upper() if (len(row) > COL_LOAD and pd.notna(row.iloc[COL_LOAD])) else ""
+                if "FORK_W" in load_val: load_kw = "FORK_W"
+                elif "FORK_L" in load_val: load_kw = "FORK_L"
+                elif "4WAY" in load_val: load_kw = "4WAY"
+                else: load_kw = ""
                 
                 repeat=qty if is_box else 1
                 for seq in range(repeat):
@@ -273,14 +297,14 @@ if file is not None:
                     p_data.append({'PKG NO':f"{pkg}{sfx}",'GROUP':str(row.iloc[COL_DESC]) if (len(row) > COL_DESC and pd.notna(row.iloc[COL_DESC])) else "-",
                         'ITEM':str(row.iloc[COL_ITEM]) if (len(row) > COL_ITEM and pd.notna(row.iloc[COL_ITEM])) else "-",
                         'DESC':str(row.iloc[COL_DESC]) if (len(row) > COL_DESC and pd.notna(row.iloc[COL_DESC])) else "-",
-                        'L':lv,'W':wv,'H':hv,'WEIGHT':wtv,'MAX_STK':ms,'STACK_OK':ms>1,'row_idx':int(oi)})
+                        'L':lv,'W':wv,'H':hv,'WEIGHT':wtv,'MAX_STK':ms,'STACK_OK':ms>1,'LOAD_KW':load_kw,'row_idx':int(oi)})
             except: continue
 
         df=pd.DataFrame(p_data)
         if df.empty: st.warning("⚠️ 필수 데이터를 찾을 수 없습니다.")
         else:
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode',False):
-                st.session_state.bins=calculate_expert_packing(df,max_40_wt,max_40_len,max_20_wt,max_20_len,max_dry_h,max_hc_h)
+                st.session_state.bins=calculate_expert_packing(df,max_40_wt,max_40_len,max_20_wt,max_20_len,max_dry_h,max_hc_h, default_load_mode)
                 st.session_state.manual_mode=True
 
             bins=st.session_state.bins
