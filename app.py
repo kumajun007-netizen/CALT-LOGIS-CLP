@@ -207,29 +207,36 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 # --- 짐 배치 로직 (이전과 동일하지만 입력 정렬 및 혼적 유지) ---
-def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None):
+def pack_items_into_bin(pieces, b, max_40_wt, max_40_len, max_h=None, allow_free_stack=False):
     for piece in pieces:
         placed = False
-        # 다단 적재: REMARK 2단/3단 지시 시 치수 무관 허용
-        # 바닥(rows)에 화물이 있고 총 단수 한도 내이면 적재
         max_stk = piece.get('MAX_STK', 1)
-        if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
+        # 일반 모드(allow_free_stack): 단수제한 없이 높이 한도만으로 스태킹
+        # REMARK 단수 지정: 지정된 단수 한도 내
+        can_stack = allow_free_stack or max_stk > 1
+        if can_stack and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
             base_n = sum(len(r['items']) for r in b['rows'])
             stk_n  = len(b.get('stacked_items', []))
-            # 최초 스태킹 시작 시 base_n 고정 → 새 행 추가로 한도 재개방 방지
-            if stk_n == 0 and base_n > 0:
-                b['stack_base_n'] = base_n
-            locked_base = b.get('stack_base_n', base_n)
-            if locked_base > 0 and stk_n < (max_stk - 1) * locked_base:
-                projected_h = b['max_H'] + piece['H']
-                if max_h and projected_h > max_h:
-                    pass
-                else:
+            projected_h = b['max_H'] + piece['H']
+            if max_h and projected_h > max_h:
+                pass  # 높이 초과 → 일반 배치
+            elif base_n > 0:
+                if allow_free_stack and max_stk == 1:
+                    # 일반 모드: 단수 무제한 (높이만 체크)
                     if 'stacked_items' not in b: b['stacked_items'] = []
                     b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
                     b['groups'].add(piece['GROUP']); placed = True
                     continue
-        row_found = False
+                else:
+                    # REMARK 단수 지정: stack_base_n 고정 후 한도 체크
+                    if stk_n == 0:
+                        b['stack_base_n'] = base_n
+                    locked_base = b.get('stack_base_n', base_n)
+                    if locked_base > 0 and stk_n < (max_stk - 1) * locked_base:
+                        if 'stacked_items' not in b: b['stacked_items'] = []
+                        b['stacked_items'].append(piece); b['total_W'] += piece['WEIGHT']
+                        b['groups'].add(piece['GROUP']); placed = True
+                        continue
         for r in b['rows']:
             temp_max_L = max(r['max_L'], piece['L'])
             if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (temp_max_L - r['max_L']) <= max_40_len and b['total_W'] + piece['WEIGHT'] <= max_40_wt:
@@ -260,7 +267,19 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
             base = "20ft Flat Rack" if is_20fr_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
-            if b['max_H'] > max_dry_h: base = "40ft HC"
+            # 단적 포함 실제 높이 계산 → HC 필요 여부 정확 판단
+            base_items = [i for r in b['rows'] for i in r['items']]
+            stk_items  = b.get('stacked_items', [])
+            if stk_items and base_items:
+                import math as _math
+                stk_layers   = _math.ceil(len(stk_items) / max(1, len(base_items)))
+                max_base_h   = max((i['H'] for i in base_items), default=0)
+                max_stk_h    = max((s['H'] for s in stk_items), default=0)
+                effective_h  = max_base_h + stk_layers * max_stk_h
+            else:
+                effective_h = b['max_H']
+            # effective_h > DRY 한도면 HC 필요, 그렇지 않으면 DRY
+            if effective_h > max_dry_h: base = "40ft HC"
             else: base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
     return bins
@@ -347,13 +366,13 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for piece in pieces:
             placed = False
             for b in group_bins:
-                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h, not lse_mode)
                 if piece in b.get('stacked_items', []) or any(piece in r['items'] for r in b['rows']):
                     placed = True; break
             if not placed:
                 new_bin = {'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
                            'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                pack_items_into_bin([piece], new_bin, _wt, _len, max_hc_h)
+                pack_items_into_bin([piece], new_bin, _wt, _len, max_hc_h, not lse_mode)
                 group_bins.append(new_bin); c_no += 1
         group_bins = [b for b in group_bins if b['used_L'] > 0 or b.get('stacked_items')]
         return group_bins, c_no
@@ -366,7 +385,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for b in sorted(bins, key=lambda x: x['used_L']):
             for piece in list(remaining):
                 before = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
-                pack_items_into_bin([piece], b, _wt, _len, max_hc_h)
+                pack_items_into_bin([piece], b, _wt, _len, max_hc_h, not lse_mode)
                 after  = sum(len(r['items']) for r in b['rows']) + len(b.get('stacked_items', []))
                 if after > before:
                     remaining.remove(piece)
