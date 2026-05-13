@@ -104,12 +104,18 @@ with st.sidebar:
             <tr><td>ITEM</td><td>D 열</td><td>참고</td></tr>
             <tr><td>DESCRIPTION</td><td>E 열</td><td>참고</td></tr>
             <tr><td>REMARK</td><td>O 열</td><td>선택</td></tr>
+            <tr><td>LOAD</td><td>P 열</td><td>선택</td></tr>
         </table>
         <div style='font-size:10px; color:#555; margin-top:8px; line-height:1.6;'>
             <b>REMARK 키워드</b><br>
-            · <b>BOX</b> : Q'ty = 실제 박스 수 (동일 화물 복제)<br>
-            · <b>2단 / 3단</b> : 해당 화물 다단 적재 허용<br>
-            · 복합 예시 : <code>BOX,2단</code>
+            · <b>BOX</b> : Q'ty = 실제 박스 수<br>
+            · <b>2단 / 3단</b> : 다단 적재 허용<br>
+            · 복합 예시 : <code>BOX,2단</code><br><br>
+            <b>LOAD 키워드</b><br>
+            · <b>FORK_W</b> : 긴쪽→W (LSE, 포크 구멍 긴쪽)<br>
+            · <b>FORK_L</b> : 긴쪽→L (FR 빈공간 채우기 등)<br>
+            · <b>4WAY</b> : 4방향 자유 (포크 구멍 4면)<br>
+            · 비워두면 사이드바 모드 설정 따라감
         </div>
         <p style='font-size:11px; color:gray; margin-top:10px;'>* 데이터 시작 행은 자동으로 감지됩니다.</p>
         """, unsafe_allow_html=True)
@@ -129,11 +135,36 @@ with st.sidebar:
             "Dimension W (mm)": [1000],
             "X2": ["X"],
             "Dimension H (mm)": [2300],
-            "REMARK": [""]
+            "REMARK": [""],
+            "LOAD": [""]
         }
         df_template = pd.DataFrame(template_data)
         tow = io.BytesIO()
-        df_template.to_excel(tow, index=False, header=True, engine='openpyxl')
+        with pd.ExcelWriter(tow, engine='openpyxl') as writer:
+            df_template.to_excel(writer, index=False, sheet_name='PackingList')
+            # 사용설명서 시트
+            guide_rows = [
+                ["■ REMARK 키워드 (O열)", ""],
+                ["BOX",    "Q'ty = 실제 박스 수 (동일 화물을 Q'ty개로 복제)"],
+                ["2단",    "해당 화물 2단 적재 허용 (치수 무관)"],
+                ["3단",    "해당 화물 3단 적재 허용 (치수 무관)"],
+                ["BOX,2단","복합 적용 예시 (쉼표로 구분)"],
+                ["", ""],
+                ["■ LOAD 키워드 (P열)", ""],
+                ["FORK_W", "긴쪽 → W방향 고정 (LSE 화물 기본, 포크 구멍이 긴쪽에만 있는 경우)"],
+                ["FORK_L", "긴쪽 → L방향 고정 (FR 빈공간 채우기 등 특수 케이스)"],
+                ["4WAY",   "4방향 자유 배치 (포크 구멍 4면, FR 대형화물)"],
+                ["(비워둠)","사이드바 적재 방식 모드 설정을 따라감"],
+                ["", ""],
+                ["■ 적재 방식 (사이드바 선택)", ""],
+                ["일반",   "L 소비 최소 자동 최적화"],
+                ["LSE",    "전체 화물에 FORK_W 적용 (개별 LOAD 키워드 있으면 개별 우선)"],
+            ]
+            df_guide = pd.DataFrame(guide_rows, columns=["키워드", "설명"])
+            df_guide.to_excel(writer, index=False, sheet_name='사용설명서')
+            ws_g = writer.sheets['사용설명서']
+            ws_g.column_dimensions['A'].width = 18
+            ws_g.column_dimensions['B'].width = 60
         st.download_button(
             label="📥 신규 화주용 양식 다운로드",
             data=tow.getvalue(),
@@ -163,6 +194,16 @@ with st.sidebar:
         st.markdown("**🔴 40ft FR (Flat Rack)**")
         max_fr40_wt  = st.number_input("최대 중량 (kg)",  10000, 45000, 30000, key="i_fr40wt")
         max_fr40_len = st.number_input("최대 길이 (mm)",  8000,  14000, 11600, key="i_fr40len")
+
+    st.markdown("---")
+    load_mode = st.radio(
+        "📐 적재 방식",
+        ["일반 (효율 최적)", "LSE (포크방향 고정)"],
+        index=0, key="load_mode",
+        help="LSE: 긴쪽→W 고정 (포크 구멍이 긴쪽에만 있는 화물)
+일반: L 소비 최소 자동 최적화"
+    )
+    lse_mode = (load_mode == "LSE (포크방향 고정)")
 
     if st.button("🔄 AI 재계산 실행"):
         st.session_state['manual_mode'] = False
@@ -223,7 +264,7 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
-def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h):
+def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, lse_mode=False):
     # ── Step 1: 치수 정규화
     raw_pieces = []
     for _, row in df.iterrows():
@@ -242,23 +283,50 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces = []
     for (s, lg, _), items in size_groups.items():
         n = len(items)
-        # 방향 A: el=s(짧은쪽→컨테이너L), ew=lg(긴쪽→컨테이너W)
-        # 방향 B: el=lg(긴쪽→컨테이너L), ew=s(짧은쪽→컨테이너W) ← 회전
-        can_a = lg <= 2340
-        can_b = s <= 2340
-        if can_a and can_b:
-            slots_a = max(1, int(2340 // lg))
-            slots_b = max(1, int(2340 // s))
-            L_used_a = math.ceil(n / slots_a) * s
-            L_used_b = math.ceil(n / slots_b) * lg
-            # 나란히 2개 이상 가능하고 L 소비가 더 적은 방향으로
-            use_el, use_ew = (lg, s) if (L_used_b < L_used_a and slots_b >= 2) else (s, lg)
-        elif can_b:
-            use_el, use_ew = lg, s
-        else:
-            use_el, use_ew = s, lg
+        can_a = lg <= 2340   # 방향 A: el=s(짧은쪽→L), ew=lg(긴쪽→W)
+        can_b = s  <= 2340   # 방향 B: el=lg(긴쪽→L), ew=s(짧은쪽→W)
 
         for p in items:
+            fork_dir = p.get('FORK_DIR')  # 개별 LOAD 키워드 우선
+            is_fr    = (p['W'] > 2340 or p['H'] > max_hc_h)  # FR 대형화물 여부
+
+            # ── 방향 결정 우선순위 ──────────────────────────────
+            # 1순위: 개별 FORK_DIR 키워드
+            # 2순위: FR 대형화물 → 4WAY (효율 최적)
+            # 3순위: FR bin 채우기용 DRY/HC 화물 → FORK_L (긴쪽→L)
+            # 4순위: LSE 모드 → FORK_W (긴쪽→W)
+            # 5순위: 일반 → L 소비 최소 자동
+
+            if fork_dir == 'FORK_W' or (fork_dir is None and lse_mode and not is_fr):
+                # 긴쪽 → W (LSE 기본, 포크가 긴쪽 구멍으로 진입)
+                use_el, use_ew = (s, lg) if can_a else (lg, s)
+
+            elif fork_dir == 'FORK_L':
+                # 긴쪽 → L
+                use_el, use_ew = (lg, s) if can_b else (s, lg)
+
+            elif fork_dir == '4WAY' or is_fr:
+                # 4방향 자유 → L 소비 최소 (일반 최적화)
+                if can_a and can_b:
+                    slots_a = max(1, int(2340 // lg))
+                    slots_b = max(1, int(2340 // s))
+                    L_a = math.ceil(n / slots_a) * s
+                    L_b = math.ceil(n / slots_b) * lg
+                    use_el, use_ew = (lg, s) if (L_b < L_a and slots_b >= 2) else (s, lg)
+                elif can_b: use_el, use_ew = lg, s
+                else:       use_el, use_ew = s, lg
+
+            else:
+                # 일반 모드 기본: L 소비 최소
+                if can_a and can_b:
+                    slots_a = max(1, int(2340 // lg))
+                    slots_b = max(1, int(2340 // s))
+                    L_a = math.ceil(n / slots_a) * s
+                    L_b = math.ceil(n / slots_b) * lg
+                    use_el, use_ew = (lg, s) if (L_b < L_a and slots_b >= 2) else (s, lg)
+                elif can_b: use_el, use_ew = lg, s
+                else:       use_el, use_ew = s, lg
+
             all_pieces.append({**p, 'L': use_el, 'W': use_ew})
     # ── Step 3: 화물 등급 분류 (비용 절감 배치 원칙)
     # 우선순위: FR(OW/OH) → HC → Dry
@@ -399,13 +467,16 @@ if file is not None:
             h_v      = clean_num(row[13])  # N열: HEIGHT
             weight_v = clean_num(row[8])   # I열: GROSS WEIGHT
 
-            # O열: REMARK (열이 없으면 빈 문자열)
+            # O열: REMARK, P열: LOAD (없으면 빈 문자열)
             remark_raw = str(row[14]).strip().upper() if (len(row) > 14 and pd.notna(row[14])) else ""
             remark_keys = [k.strip() for k in remark_raw.replace('，', ',').split(',')]
+            load_raw    = str(row[15]).strip().upper() if (len(row) > 15 and pd.notna(row[15])) else ""
 
-            is_box   = 'BOX' in remark_keys          # Q'ty = 실제 박스 수
+            is_box   = 'BOX' in remark_keys
             max_stk  = 3 if '3단' in remark_keys else (2 if '2단' in remark_keys else 1)
             stack_ok = max_stk > 1
+            # LOAD 키워드: FORK_L / FORK_W / 4WAY (없으면 None → 토글 따라감)
+            fork_dir = load_raw if load_raw in ('FORK_L', 'FORK_W', '4WAY') else None
 
             # PKG NO와 치수(LWH)만 필수값으로 체크
             if not pkg_v or pkg_v.lower() in ['nan', 'none', '.', ''] or l_v == 0 or w_v == 0 or h_v == 0:
@@ -425,6 +496,7 @@ if file is not None:
                     'WEIGHT'  : weight_v,
                     'STACK_OK': stack_ok,
                     'MAX_STK' : max_stk,
+                    'FORK_DIR': fork_dir,   # FORK_L / FORK_W / 4WAY / None
                     'row_idx' : int(row['orig_idx'])
                 })
 
@@ -433,7 +505,7 @@ if file is not None:
             st.warning("⚠️ 지정된 열(B, J, L, N)에서 필수 데이터를 찾을 수 없습니다. 양식을 확인하세요.")
         else:
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
-                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h)
+                st.session_state.bins = calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, lse_mode)
                 st.session_state.manual_mode = True
 
             bins = st.session_state.bins
