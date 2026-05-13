@@ -234,13 +234,19 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
         is_20ft_size  = b['used_L'] <= max_20_len  and b['total_W'] <= max_20_wt
         is_20fr_size  = b['used_L'] <= max_fr20_len and b['total_W'] <= max_fr20_wt
         is_ow = b['max_W'] > 2340
-        # OH 판단: 단적 포함 실제 누적 높이로 체크
+        # OH 판단: 치수별 정확한 누적 높이 체크
         _base_items = [i for r in b['rows'] for i in r['items']]
         _stk_items  = b.get('stacked_items', [])
-        if _stk_items and _base_items:
-            _stk_layers = math.ceil(len(_stk_items) / max(1, len(_base_items)))
-            _max_stk_h  = max((s['H'] for s in _stk_items), default=0)
-            _effective_h = b['max_H'] + _stk_layers * _max_stk_h
+        if _stk_items:
+            from collections import Counter as _C
+            _base_cnt = _C(i['H'] for i in _base_items)
+            _stk_cnt  = _C(s['H'] for s in _stk_items)
+            _effective_h = 0
+            for h_val, stk_n in _stk_cnt.items():
+                base_n = _base_cnt.get(h_val, max(1, len(_base_items)))
+                layers = 1 + math.ceil(stk_n / max(1, base_n))
+                _effective_h = max(_effective_h, h_val * layers)
+            _effective_h = max(_effective_h, b['max_H'])
         else:
             _effective_h = b['max_H']
         is_oh = _effective_h > max_hc_h
@@ -393,8 +399,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
 
             # 빈 row 제거 + 통계 재계산
             b['rows'] = [r for r in b['rows'] if r['items']]
-            b['max_H'] = max((i['H'] for r in b['rows'] for i in r['items']), default=0)
-            b['max_W'] = max((i['W'] for r in b['rows'] for i in r['items']), default=0)
+            for r in b['rows']:
+                r['max_L']  = max(i['L'] for i in r['items'])
+                r['used_W'] = sum(i['W'] for i in r['items'])
+            b['used_L'] = sum(r['max_L'] for r in b['rows'])
+            b['max_H']  = max((i['H'] for r in b['rows'] for i in r['items']), default=0)
+            b['max_W']  = max((i['W'] for r in b['rows'] for i in r['items']), default=0)
             b['total_W'] = sum(i['WEIGHT'] for r in b['rows'] for i in r['items'])                          + sum(s['WEIGHT'] for s in b.get('stacked_items', []))
 
     def _pack_group(pieces, c_no_start, p_max_wt=None, p_max_len=None):
