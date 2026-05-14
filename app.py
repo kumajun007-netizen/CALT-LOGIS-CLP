@@ -161,7 +161,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
-        # ★ 수정된 부분: PKG NO에서 숫자들을 추출해 정렬용 값으로 저장 (예: PKG-01-002 -> 1002)
+        # PKG NO에서 숫자들을 추출해 정렬용 값으로 저장
         nums = re.findall(r'\d+', str(row['PKG NO']))
         p_seq = int("".join(nums)) if nums else 999999
         
@@ -199,7 +199,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    # ★ 수정된 부분: 정렬 기준에 p_seq(번호 순서) 추가
+    # 정렬 기준: 폭 -> 높이 -> 길이 -> (동일할 경우) PKG NO 순차 배정
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'],x['GROUP'])
     
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
@@ -294,8 +294,10 @@ if file is not None:
                 ms = int(match.group(1)) if match else 1
                 
                 load_val = str(row.iloc[COL_LOAD]).strip().upper() if (len(row) > COL_LOAD and pd.notna(row.iloc[COL_LOAD])) else ""
+                
+                # ★ 여기서 발생했던 오타 완벽하게 수정! (load_kw -> load_val)
                 if "FORK_W" in load_val: load_kw = "FORK_W"
-                elif "FORK_L" in load_kw: load_kw = "FORK_L"
+                elif "FORK_L" in load_val: load_kw = "FORK_L"
                 elif "4WAY" in load_val: load_kw = "4WAY"
                 else: load_kw = ""
                 
@@ -309,7 +311,7 @@ if file is not None:
             except: continue
 
         df=pd.DataFrame(p_data)
-        if df.empty: st.warning("⚠️ 필수 데이터를 찾을 수 없습니다.")
+        if df.empty: st.warning("⚠️ 필수 데이터를 찾을 수 없습니다. 엑셀 양식을 다시 한 번 확인해주세요.")
         else:
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode',False):
                 st.session_state.bins=calculate_expert_packing(df,max_40_wt,max_40_len,max_20_wt,max_20_len,max_dry_h,max_hc_h, default_load_mode)
