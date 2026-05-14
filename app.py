@@ -161,7 +161,11 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
-        raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt})
+        # ★ 수정된 부분: PKG NO에서 숫자들을 추출해 정렬용 값으로 저장 (예: PKG-01-002 -> 1002)
+        nums = re.findall(r'\d+', str(row['PKG NO']))
+        p_seq = int("".join(nums)) if nums else 999999
+        
+        raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt, 'p_seq': p_seq})
 
     sg={}
     for p in raw:
@@ -195,7 +199,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'])
+    # ★ 수정된 부분: 정렬 기준에 p_seq(번호 순서) 추가
+    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'],x['GROUP'])
+    
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
     dry_p = sorted([p for p in all_pieces if p['W']<=2340 and p['H']<=max_dry_h], key=sk)
@@ -289,7 +295,7 @@ if file is not None:
                 
                 load_val = str(row.iloc[COL_LOAD]).strip().upper() if (len(row) > COL_LOAD and pd.notna(row.iloc[COL_LOAD])) else ""
                 if "FORK_W" in load_val: load_kw = "FORK_W"
-                elif "FORK_L" in load_val: load_kw = "FORK_L"
+                elif "FORK_L" in load_kw: load_kw = "FORK_L"
                 elif "4WAY" in load_val: load_kw = "4WAY"
                 else: load_kw = ""
                 
