@@ -24,7 +24,6 @@ st.markdown(f"""<style>
 .guide-table th,.guide-table td {{ border:1px solid #ddd;padding:5px;text-align:center; }}
 .guide-table th {{ background-color:#eee; }}
 .essential {{ color:{ALERT_COLOR};font-weight:bold; }}
-/* 라디오 버튼 스타일 강조 */
 div.row-widget.stRadio > div {{ flex-direction:row; background-color:white; padding: 10px 20px; border-radius: 8px; border: 1px solid #e1e4e8; }}
 </style>""", unsafe_allow_html=True)
 
@@ -181,14 +180,11 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
         
-        # 💡 로직 스왑 적용 완료
         if rule == 'FORK_L':
-            # 지게차가 긴 쪽(L)으로 진입 -> 긴 쪽이 컨테이너의 폭(W) 방향으로 향함 (가로 눕힘)
             el, ew = (s, lg) if ca else (lg, s)
         elif rule == 'FORK_W':
-            # 지게차가 짧은 쪽(W)으로 진입 -> 긴 쪽이 컨테이너의 길이(L) 방향으로 향함 (세로 세움)
             el, ew = (lg, s) if cb else (s, lg)
-        else: # 4WAY
+        else: 
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
                 La=math.ceil(n/sa)*s; Lb=math.ceil(n/sb)*lg
@@ -198,7 +194,10 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'])
+    # 💡 정렬 기준(sk)에 엑셀 원본 행 순서(row_idx)와 PKG NO 추가
+    # 이렇게 하면 크기가 동일한 박스들은 무작위로 섞이지 않고 PKG-001, -002 순으로 나란히 배치됩니다.
+    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'], x['row_idx'], x['PKG NO'])
+    
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
     dry_p = sorted([p for p in all_pieces if p['W']<=2340 and p['H']<=max_dry_h], key=sk)
@@ -241,7 +240,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
 
 
-# 💡 UI 텍스트 간소화 완료
 st.markdown("### 📤 기본 설정 및 패킹리스트 업로드")
 
 load_mode_ui = st.radio(
