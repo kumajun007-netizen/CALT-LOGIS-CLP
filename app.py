@@ -106,7 +106,7 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 
-# ★★★ 187대 생성 버그 원천 차단: True/False 반환형으로 로직 개선 ★★★
+# ★★★ 안정적인 2D + 혼적 테트리스 (버그 원천 차단형) ★★★
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     placed_any = False
     for piece in pieces:
@@ -116,14 +116,16 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
         if b['total_W'] + piece['WEIGHT'] > max_wt:
             continue
             
-        # 1. 다단 적재(혼합) 시도
+        # 1. 다단 적재(혼합 적재) 시도
         for r in b['rows']:
             for base_item in r['items']:
                 if '_stacked' not in base_item:
                     base_item['_stacked'] = []
                 
+                # 맨 위 화물을 기준으로 면적 검사
                 top_item = base_item['_stacked'][-1] if base_item['_stacked'] else base_item
                 
+                # 얹을 화물의 크기가 같거나 작을 때만 쌓음
                 if piece['L'] <= top_item['L'] and piece['W'] <= top_item['W']:
                     current_h = base_item['H'] + sum(s['H'] for s in base_item['_stacked'])
                     current_layers = 1 + len(base_item['_stacked'])
@@ -220,6 +222,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
         
+        # FORK_L: 포크 구멍이 있는 긴 쪽(lg)을 W방향으로 눕힘
         if rule == 'FORK_L': 
             el, ew = (s, lg) if lg <= 2340 else (lg, s)
         elif rule == 'FORK_W': 
@@ -360,6 +363,7 @@ if file is not None:
 
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
+            # --- 통일성 있게 개편된 KPI 섹션 ---
             st.subheader("📊 실시간 적재 요약")
             c1, c2, c3, c4 = st.columns(4)
             
@@ -577,6 +581,7 @@ if file is not None:
                             border=dict(color="#FFD700",width=3) if layers>1 else dict(color="white",width=1)
                             fig.add_shape(type="rect",x0=cx,y0=cy,x1=cx+item['L'],y1=cy+item['W'],fillcolor=ic,opacity=0.85,line=border)
                             
+                            # 2D 화면에서 혼합적재(다른 화물이 섞여 올라간 경우) 내역 텍스트로 표시
                             if layers > 1: 
                                 stack_txt = "<br>+".join([f"{s['PKG NO']}(H{s['H']})" for s in stacked_list])
                                 lbl_txt = f"<b>{item['PKG NO']}</b><br>+ {stack_txt}"
