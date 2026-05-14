@@ -314,12 +314,13 @@ if file is not None:
             # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
-            # --- [수정] 4분할 구조로 바꾼 상세 KPI 섹션 적용 ---
+            # --- [수정] 통일성 있게 개편된 KPI 섹션 ---
             st.subheader("📊 실시간 적재 요약")
             c1, c2, c3, c4 = st.columns(4)
             
             packed = sum(count_items(b) for b in bins)
             total_w = sum(b['total_W'] for b in bins)
+            raw_total_w = sum(df['WEIGHT']) # 전체 화물의 총 중량 계산
             
             from collections import Counter as _C
             # 컨테이너 라벨에서 뒤에 붙은 " #숫자"를 제거하고 종류만 추출
@@ -341,11 +342,11 @@ if file is not None:
             dry_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in dry_counts.items()])
             if not dry_html: dry_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 DRY/HC 컨테이너 없음</div>"
             
-            # KPI 카드 렌더링
+            # KPI 카드 렌더링 (배정 수량 / 전체 수량 포맷 통일)
             c1.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 화물 / 전체 화물</div><div class="kpi-value"><span style="color:{ACCENT_COLOR};">{packed}</span> / {len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
             c2.markdown(f'<div class="kpi-card"><div class="kpi-title">FR 컨테이너 ({fr_total} UNIT)</div><div style="margin-top:2px;">{fr_html}</div></div>', unsafe_allow_html=True)
             c3.markdown(f'<div class="kpi-card"><div class="kpi-title">DRY 컨테이너 ({dry_total} UNIT)</div><div style="margin-top:2px;">{dry_html}</div></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div class="kpi-card"><div class="kpi-title">총 중량</div><div class="kpi-value">{total_w:,.0f} <span style="font-size:16px;color:#777;font-weight:600;">kg</span></div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 중량 / 전체 중량</div><div class="kpi-value"><span style="color:{ACCENT_COLOR};">{total_w:,.0f}</span> / {raw_total_w:,.0f} <span style="font-size:16px;color:#777;font-weight:600;">kg</span></div></div>', unsafe_allow_html=True)
 
             for b in bins:
                 if b['used_L']==0 and not b.get('stacked_items'): continue
