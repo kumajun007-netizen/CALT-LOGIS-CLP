@@ -29,7 +29,7 @@ div.row-widget.stRadio > div {{ flex-direction:row; background-color:white; padd
 
 /* 커스텀 KPI 카드 디자인 */
 .kpi-card {{ background-color:white;padding:15px;border-radius:10px;border-left:5px solid {MAIN_COLOR};box-shadow:0 2px 4px rgba(0,0,0,0.05); height:100%; }}
-.kpi-title {{ font-size:14px; color:#555; margin-bottom:5px; }}
+.kpi-title {{ font-size:14px; color:#555; margin-bottom:5px; font-weight:600; }}
 .kpi-value {{ font-size:28px; font-weight:800; color:#111; }}
 </style>""", unsafe_allow_html=True)
 
@@ -314,7 +314,7 @@ if file is not None:
             # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
-            # --- [수정] 상세 KPI 섹션 적용 ---
+            # --- [수정] 4분할 구조로 바꾼 상세 KPI 섹션 적용 ---
             st.subheader("📊 실시간 적재 요약")
             c1, c2, c3, c4 = st.columns(4)
             
@@ -326,12 +326,25 @@ if file is not None:
             c_types = [re.sub(r' #\d+$', '', b['c_label']) for b in bins]
             type_counts = _C(c_types)
             
-            # 컨테이너 수 상세 내역 HTML 생성
-            breakdown_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in type_counts.items()])
+            # FR과 DRY/HC 분류
+            fr_counts = {k: v for k, v in type_counts.items() if 'Flat Rack' in k or 'FR' in k}
+            dry_counts = {k: v for k, v in type_counts.items() if 'Dry' in k or 'HC' in k}
             
-            c1.markdown(f'<div class="kpi-card"><div class="kpi-title">전체 화물</div><div class="kpi-value">{len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
-            c2.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 완료</div><div class="kpi-value">{packed} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
-            c3.markdown(f'<div class="kpi-card"><div class="kpi-title">컨테이너 수 ({len(bins)} UNIT)</div><div style="margin-top:2px;">{breakdown_html}</div></div>', unsafe_allow_html=True)
+            fr_total = sum(fr_counts.values())
+            dry_total = sum(dry_counts.values())
+
+            # FR HTML 생성
+            fr_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in fr_counts.items()])
+            if not fr_html: fr_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 FR 컨테이너 없음</div>"
+
+            # DRY/HC HTML 생성
+            dry_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in dry_counts.items()])
+            if not dry_html: dry_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 DRY/HC 컨테이너 없음</div>"
+            
+            # KPI 카드 렌더링
+            c1.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 화물 / 전체 화물</div><div class="kpi-value"><span style="color:{ACCENT_COLOR};">{packed}</span> / {len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="kpi-card"><div class="kpi-title">FR 컨테이너 ({fr_total} UNIT)</div><div style="margin-top:2px;">{fr_html}</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="kpi-card"><div class="kpi-title">DRY 컨테이너 ({dry_total} UNIT)</div><div style="margin-top:2px;">{dry_html}</div></div>', unsafe_allow_html=True)
             c4.markdown(f'<div class="kpi-card"><div class="kpi-title">총 중량</div><div class="kpi-value">{total_w:,.0f} <span style="font-size:16px;color:#777;font-weight:600;">kg</span></div></div>', unsafe_allow_html=True)
 
             for b in bins:
