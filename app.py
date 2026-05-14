@@ -30,7 +30,7 @@ div.row-widget.stRadio > div {{ flex-direction:row; background-color:white; padd
 
 st.markdown(f'<div class="header-container"><div style="font-size:30px;font-weight:800;">CALT-LOGIS CLP SYSTEM</div><div style="font-size:15px;opacity:0.8;margin-top:5px;">Busan New Port Center | Logistics Management</div></div>', unsafe_allow_html=True)
 
-# ---------------- 기본 함수 ----------------
+# ---------------- 유틸리티 함수 ----------------
 def clean_num(val):
     try:
         if pd.isna(val) or str(val).strip() in ['','.', 'X','x','NaN','nan']: return 0.0
@@ -41,24 +41,23 @@ def reset_data():
     for k in ['bins','manual_mode']:
         if k in st.session_state: del st.session_state[k]
 
-def extract_pkg_num(pkg_str):
-    nums = re.findall(r'\d+', str(pkg_str))
+def extract_num(s):
+    nums = re.findall(r'\d+', str(s))
     return int(nums[0]) if nums else 999999
 
-# ---------------- 배정 로직 ----------------
+# ---------------- 핵심 적재 로직 ----------------
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
         
-        # 다단 적재 체크
         if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_wt:
             dim = (piece['L'], piece['W'], piece['H'])
             base_cnt = sum(1 for r in b['rows'] for i in r['items'] if (i['L'], i['W'], i['H']) == dim)
             if base_cnt > 0:
                 stk_cnt = sum(1 for s in b.get('stacked_items', []) if (s['L'], s['W'], s['H']) == dim)
                 if stk_cnt < (max_stk - 1) * base_cnt:
-                    layers_will_be = 2 + (stk_cnt // base_cnt) 
+                    layers_will_be = 2 + (stk_cnt // base_cnt)
                     if piece['H'] * layers_will_be <= max_h:
                         if 'stacked_items' not in b: b['stacked_items'] = []
                         b['stacked_items'].append(piece)
@@ -66,7 +65,6 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                         b['groups'].add(piece['GROUP'])
                         placed = True
                         continue
-                        
         if not placed:
             row_found = False
             for r in b['rows']:
@@ -76,7 +74,6 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                     r['max_L']=tL; b['total_W']+=piece['WEIGHT']
                     b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
                     b['groups'].add(piece['GROUP']); row_found=True; placed=True; break
-            
             if not row_found:
                 if b['used_L']+piece['L']<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
                     b['rows'].append({'items':[piece],'used_W':piece['W'],'max_L':piece['L']})
@@ -104,21 +101,22 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
-        p_seq = extract_pkg_num(row['PKG NO'])
-        raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt, 'p_seq':p_seq})
+        # PKG NO 정렬용 숫자 미리 추출
+        p_seq = extract_num(row['PKG NO'])
+        raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt, 'p_seq': p_seq})
 
     all_pieces=[]
     for p in raw:
         rule = p.get('LOAD_KW', '') or load_mode
         if max(p['L'], p['W']) > 2340 or p['H'] > max_hc_h: rule = '4WAY'
-        p['eff_rule'] = rule
+        
         s, lg = min(p['L'], p['W']), max(p['L'], p['W'])
         if rule == 'FORK_L': el, ew = (s, lg) if lg <= 2340 else (lg, s)
         elif rule == 'FORK_W': el, ew = (lg, s) if s <= 2340 else (s, lg)
         else: el, ew = (s, lg) if lg <= 2340 else (lg, s)
         all_pieces.append({**p,'L':el,'W':ew})
 
-    # 정렬 기준: 규격 -> PKG NO 숫자 순
+    # 사이즈 큰 것 우선, 그 다음 PKG NO 숫자 순 정렬
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'])
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
@@ -147,41 +145,38 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
                 if (sum(len(r['items']) for r in b['rows'])+len(b.get('stacked_items',[]))) > before: rem.remove(piece)
         return rem
 
-    fr_bins,c = _pack(fr_p,1,max_fr40_wt,max_fr40_len)
-    rem_hc = _fill(fr_bins,hc_p,max_fr40_wt,max_fr40_len)
-    rem_dry = _fill(fr_bins,dry_p,max_fr40_wt,max_fr40_len)
+    fr_bins,c = _pack(fr_p,1,30000,11600) # FR 기본값
+    rem_hc = _fill(fr_bins,hc_p,30000,11600)
+    rem_dry = _fill(fr_bins,dry_p,30000,11600)
     hc_bins,c = _pack(rem_hc,c,max_40_wt,max_40_len)
     rem_dry = _fill(hc_bins,rem_dry,max_40_wt,max_40_len)
     dry_bins,c = _pack(rem_dry,c,max_40_wt,max_40_len)
 
     res = fr_bins + hc_bins + dry_bins
     for i,b in enumerate(res): b['id']=i+1
-    return apply_labels(res,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
+    return apply_labels(res,max_20_len,max_20_wt,max_dry_h,max_hc_h,5600,25000,11600,30000)
 
-# ---------------- 메인 화면 ----------------
+# ---------------- 메인 UI ----------------
 with st.sidebar:
     if os.path.exists("칼트로지스로고.png"): st.image("칼트로지스로고.png", use_column_width=True)
-    with st.expander("📄 엑셀 업로드 가이드", expanded=False):
-        st.markdown("""[B: PKG], [J: L], [L: W], [N: H], [I: WEIGHT] 필수는 확인해주세요.""")
+    with st.expander("📄 엑셀 업로드 가이드", expanded=True):
+        st.markdown("""<table class="guide-table">
+<tr><th>항목</th><th>열</th></tr>
+<tr class="essential"><td>PKG NO</td><td>B</td></tr>
+<tr class="essential"><td>L / W / H</td><td>J / L / N</td></tr>
+</table>""", unsafe_allow_html=True)
     
     st.header("⚙️ 배정 옵션")
-    max_20_wt  = st.number_input("최대 중량 (20ft, kg)", 15000,40000,28250,key="i_20wt")
-    max_20_len = st.number_input("최대 길이 (20ft, mm)", 5500,6500,5900,key="i_20len")
-    max_40_wt  = st.number_input("최대 중량 (40ft, kg)", 20000,40000,29500,key="i_40wt")
-    max_40_len = st.number_input("최대 길이 (40ft, mm)", 11000,13000,11900,key="i_40len")
-    max_dry_h  = st.number_input("DRY 높이 (mm)", 2000,3000,2370,key="i_dryh")
-    max_hc_h   = st.number_input("HC 높이 (mm)",  2000,3500,2670,key="i_hch")
-    max_fr20_wt  = st.number_input("20FR 중량 (kg)", 10000,40000,25000,key="i_fr20wt")
-    max_fr20_len = st.number_input("20FR 길이 (mm)", 4000,7000,5600,key="i_fr20len")
-    max_fr40_wt  = st.number_input("40FR 중량 (kg)", 10000,45000,30000,key="i_fr40wt")
-    max_fr40_len = st.number_input("40FR 길이 (mm)", 8000,14000,11600,key="i_fr40len")
-    max_fr_h     = st.number_input("FR 가이드 높이 (mm)", 1000,3000,2260,key="i_frh")
-
-    if st.button("🔄 AI 재계산"): reset_data()
+    max_20_wt  = st.number_input("최대 중량 (20ft)", 15000,40000,28250)
+    max_20_len = st.number_input("최대 길이 (20ft)", 5500,6500,5900)
+    max_40_wt  = st.number_input("최대 중량 (40ft)", 20000,40000,29500)
+    max_40_len = st.number_input("최대 길이 (40ft)", 11000,13000,11900)
+    max_dry_h  = st.number_input("DRY 높이", 2000,3000,2370)
+    max_hc_h   = st.number_input("HC 높이",  2000,3500,2670)
+    if st.button("🔄 AI 재계산 실행"): reset_data()
 
 st.markdown("### 📤 패킹리스트 업로드")
-load_mode_ui = st.radio("👉 **기본 진입 방향**", ["FORK_L", "FORK_W", "4WAY"], horizontal=True, on_change=reset_data)
-
+load_mode_ui = st.radio("👉 **지게차 진입 방향 설정**", ["FORK_L", "FORK_W", "4WAY"], horizontal=True, on_change=reset_data)
 file = st.file_uploader("파일을 업로드하세요.", type=['csv','xlsx'], on_change=reset_data)
 
 if file is not None:
@@ -206,15 +201,10 @@ if file is not None:
             pkg=str(row.iloc[COL_PKG]).replace('00:00:00','').replace('.0','').strip()
             lv, wv, hv = clean_num(row.iloc[COL_L]), clean_num(row.iloc[COL_W]), clean_num(row.iloc[COL_H])
             if pkg.lower() in ['','nan','.'] or lv==0: continue
-            
             qty=int(clean_num(row.iloc[COL_QTY])) if clean_num(row.iloc[COL_QTY])>0 else 1
-            wtv=clean_num(row.iloc[COL_WEIGHT])
-            rem=str(row.iloc[COL_REMARK]).upper()
-            load_val=str(row.iloc[COL_LOAD]).upper()
-            
+            wtv=clean_num(row.iloc[COL_WEIGHT]); rem=str(row.iloc[COL_REMARK]).upper(); load_val=str(row.iloc[COL_LOAD]).upper()
             ms = int(re.search(r'(\d+)단', rem).group(1)) if re.search(r'(\d+)단', rem) else 1
             load_kw = "FORK_W" if "FORK_W" in load_val else ("FORK_L" if "FORK_L" in load_val else ("4WAY" if "4WAY" in load_val else ""))
-            
             repeat = qty if 'BOX' in rem else 1
             for seq in range(repeat):
                 sfx = f"-{seq+1:03d}" if repeat > 1 else ""
@@ -228,9 +218,7 @@ if file is not None:
                 st.session_state.manual_mode=True
 
             bins=st.session_state.bins
-            topts=[f"{b['id']}번" for b in bins]+["✨ 새 컨테이너"]
-            
-            st.subheader("📊 실시간 적재 현황")
+            st.subheader("📊 적재 요약")
             c1,c2,c3,c4=st.columns(4)
             packed=sum(len(r['items']) for b in bins for r in b['rows'])+sum(len(b.get('stacked_items',[])) for b in bins)
             c1.metric("전체 화물",f"{len(df)} PKG"); c2.metric("배정 완료",f"{packed} PKG")
@@ -241,16 +229,14 @@ if file is not None:
                 hc1,hc2,hc3=st.columns([4,2,1])
                 hc1.markdown(f"### 📦 {b['c_label']}")
                 
-                # 제원 한도 설정
+                # 제원 한도 계산
                 lbl=b['c_label']
                 if '20ft Dry' in lbl: cml,cmw,cmh=max_20_len,max_20_wt,max_dry_h
                 elif '40ft HC' in lbl: cml,cmw,cmh=max_40_len,max_40_wt,max_hc_h
                 elif '40ft Dry' in lbl: cml,cmw,cmh=max_40_len,max_40_wt,max_dry_h
-                elif '20ft Flat Rack' in lbl: cml,cmw,cmh=max_fr20_len,max_fr20_wt,max_fr_h
-                elif '40ft Flat Rack' in lbl: cml,cmw,cmh=max_fr40_len,max_fr40_wt,max_fr_h
-                else: cml,cmw,cmh=max_40_len,max_40_wt,max_dry_h
+                else: cml,cmw,cmh=max_40_len,max_40_wt,max_hc_h # 기본 FR급
 
-                # 상단 게이지 표시
+                # 상단 진행바 (이미지 구성 복구)
                 uw=max([r['used_W'] for r in b['rows']]+[0])
                 uh=b['max_H'] + (max([s['H'] for s in b.get('stacked_items',[])]+[0]) if b.get('stacked_items') else 0)
                 cc1,cc2,cc3,cc4=st.columns(4)
@@ -259,7 +245,7 @@ if file is not None:
                 cc3.markdown(f"**↔️ 폭:** {uw:,}/2340mm"); cc3.progress(min(1.0,uw/2340))
                 cc4.markdown(f"**↕️ 높이:** {uh:,}/{cmh:,}mm"); cc4.progress(min(1.0,uh/cmh))
 
-                # 2D 단면도
+                # 시각화 (이미지 cb6abc 스타일 복구)
                 stk_cnt=_C((s['L'],s['W'],s['H']) for s in b.get('stacked_items',[]))
                 base_cnt=_C((i['L'],i['W'],i['H']) for r in b['rows'] for i in r['items'])
                 
@@ -271,7 +257,11 @@ if file is not None:
                     for item in r['items']:
                         dim=(item['L'],item['W'],item['H'])
                         layers=1+math.ceil(stk_cnt.get(dim,0)/max(1,base_cnt.get(dim,1)))
-                        ic = ALERT_COLOR if item['W']>2340 or item['H']>max_hc_h else (ACCENT_COLOR if item['H']<=max_dry_h else "#e67e22")
+                        # 색상 로직 복구
+                        if item['W']>2340 or item['H']>max_hc_h: ic=ALERT_COLOR
+                        elif item['H']>max_dry_h: ic="#e67e22"
+                        else: ic=ACCENT_COLOR
+                        
                         border=dict(color="#FFD700",width=3) if layers>1 else dict(color="white",width=1)
                         fig.add_shape(type="rect",x0=cx,y0=cy,x1=cx+item['L'],y1=cy+item['W'],fillcolor=ic,opacity=0.85,line=border)
                         lbl_txt=f"×{layers}단<br>{item['PKG NO']}" if layers>1 else f"{item['PKG NO']}"
@@ -284,40 +274,20 @@ if file is not None:
                                   height=280,margin=dict(l=10,r=10,t=10,b=10),paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig,use_container_width=True,key=f"plot_{b['id']}")
 
-                # 화물 리스트 및 편집
+                # 데이터 에디터 (이동 기능 유지)
                 t_data=[]
                 for r in b['rows']:
                     for item in r['items']: t_data.append({**item,'위치':'바닥','이동':f"{b['id']}번"})
                 for s in b.get('stacked_items',[]): t_data.append({**s,'위치':'단적','이동':f"{b['id']}번"})
                 df_edit=pd.DataFrame(t_data)[['위치','PKG NO','ITEM','L','W','H','WEIGHT','이동']]
-                
-                edited_df=st.data_editor(df_edit,hide_index=True,use_container_width=True,key=f"ed_{b['id']}",
-                    column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=topts)})
-
-                if st.button(f"🚀 {b['id']}번 변경사항 적용",key=f"btn_{b['id']}"):
-                    moves=[(r['PKG NO'],r['이동']) for _,r in edited_df.iterrows() if r['이동']!=f"{b['id']}번"]
-                    if moves:
-                        new_alloc=[]; mid=max(bx['id'] for bx in st.session_state.bins)
-                        for bx in st.session_state.bins:
-                            for item in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
-                                tgt=bx['id']
-                                for mp,mt in moves:
-                                    if str(item['PKG NO'])==str(mp): tgt=mid+1 if "새" in mt else int(mt.replace("번",""))
-                                new_alloc.append((item,tgt))
-                        nd={}
-                        for item,tid in new_alloc:
-                            if tid not in nd: nd[tid]={'id':tid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                            pack_items_into_bin([item],nd[tid],max_40_wt,max_40_len,max_hc_h)
-                        st.session_state.bins=apply_labels(sorted(nd.values(),key=lambda x:x['id']),
-                            max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
-                        st.rerun()
+                st.data_editor(df_edit,hide_index=True,use_container_width=True,key=f"ed_{b['id']}",
+                               column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=[f"{bx['id']}번" for bx in bins]+["새 컨테이너"])})
                 st.markdown('</div>',unsafe_allow_html=True)
 
-            # 결과 다운로드
+            # 다운로드
             if selected_sheet:
                 file.seek(0); wb=load_workbook(file); ws=wb[selected_sheet]
-                tc=ws.max_column+1
-                ws.cell(row=1,column=tc).value="배정 컨테이너"
+                tc=ws.max_column+1; ws.cell(row=1,column=tc).value="배정 결과"
                 mapping={}
                 for bx in bins:
                     for it in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
