@@ -36,10 +36,6 @@ def clean_num(val):
         return float(str(val).replace(',','').strip())
     except: return 0.0
 
-# 💡 자연어 정렬 헬퍼 (PKG-1, PKG-10, PKG-2 순서 꼬임 방지)
-def nat_key(s):
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', str(s))]
-
 def reset_data():
     for k in ['bins','manual_mode']:
         if k in st.session_state: del st.session_state[k]
@@ -199,9 +195,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    # 💡 1차 물리적 정렬: 짐을 넣을 때 PKG NO 순서 보장
-    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'], x.get('row_idx',0), nat_key(x.get('PKG NO','')))
-    
+    sk=lambda x:(-x['W'],-x['H'],-x['L'],x['GROUP'])
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
     dry_p = sorted([p for p in all_pieces if p['W']<=2340 and p['H']<=max_dry_h], key=sk)
@@ -377,10 +371,6 @@ if file is not None:
                     same=[i for i in base_items if i['L']==s['L'] and i['W']==s['W'] and i['H']==s['H']]
                     danger='' if same else ('🚨' if (s['L']>base_min_L or s['W']>base_min_W) else '')
                     t_data.append({**s,'위치':'단적','이동':f"{b['id']}번",'⚠️':danger})
-                
-                # 💡 2차 UI/테이블 정렬: 화면에 보일 때도 PKG NO 순서로 강제 정렬
-                t_data.sort(key=lambda x: (x.get('row_idx', 0), nat_key(x.get('PKG NO', ''))))
-                
                 df_edit=pd.DataFrame(t_data)[['⚠️','위치','PKG NO','ITEM','L','W','H','WEIGHT','이동']]
                 edited_df=st.data_editor(df_edit,hide_index=True,use_container_width=True,key=f"ed_{b['id']}",
                     column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=topts)},
@@ -465,15 +455,10 @@ if file is not None:
                 for item in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
                     rcc[item['row_idx']][bx['c_label']]+=1
                     rdl[item['row_idx']].append((item['PKG NO'],bx['c_label'],item['L'],item['W'],item['H'],item['WEIGHT']))
-            
-            # 💡 3차 엑셀 정렬: 엑셀 배정상세 및 요약에서도 PKG NO 순서 보장
             mapping={}
             for ri,ctr in rcc.items():
                 total=sum(ctr.values())
                 mapping[ri]=" / ".join(f"{lb} ({cn}개)" for lb,cn in ctr.items()) if total>1 else list(ctr.keys())[0]
-
-            for ri in rdl:
-                rdl[ri].sort(key=lambda x: nat_key(x[0])) # PKG NO 기준으로 정렬
 
             if file.name.endswith('.xlsx'):
                 file.seek(0); wb=load_workbook(file); ws=wb[selected_sheet]
