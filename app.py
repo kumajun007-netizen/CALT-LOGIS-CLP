@@ -16,7 +16,7 @@ st.markdown(f"""<style>
 * {{ font-family:'Pretendard',sans-serif; }}
 .main {{ background-color:#f8f9fa; }}
 .header-container {{ background-color:{MAIN_COLOR};padding:25px;border-radius:10px;color:white;margin-bottom:25px;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.1); }}
-[data-testid="stFileUploadDropzone"] {{ border:2px dashed {MAIN_COLOR};background-color:#eaf1fb;padding:40px;border-radius:12px; }}
+[data-testid="stFileUploadDropzone"] {{ border:2px dashed {MAIN_COLOR};background-color:#eaf1fb;padding:40px;border-radius:12px; margin-top: 10px; }}
 [data-testid="stMetric"] {{ background-color:white;padding:15px;border-radius:10px;border-left:5px solid {MAIN_COLOR};box-shadow:0 2px 4px rgba(0,0,0,0.05); }}
 .stButton>button {{ width:100%;font-weight:600;color:white;background-color:{MAIN_COLOR};border-radius:8px;border:none;padding:0.5rem 1rem; }}
 .container-box {{ background-color:white;padding:20px;border-radius:10px;border:1px solid #e1e4e8;margin-bottom:20px; }}
@@ -24,6 +24,8 @@ st.markdown(f"""<style>
 .guide-table th,.guide-table td {{ border:1px solid #ddd;padding:5px;text-align:center; }}
 .guide-table th {{ background-color:#eee; }}
 .essential {{ color:{ALERT_COLOR};font-weight:bold; }}
+/* 라디오 버튼 스타일 강조 */
+div.row-widget.stRadio > div {{ flex-direction:row; background-color:white; padding: 10px 20px; border-radius: 8px; border: 1px solid #e1e4e8; }}
 </style>""", unsafe_allow_html=True)
 
 st.markdown(f'<div class="header-container"><div style="font-size:30px;font-weight:800;">CALT-LOGIS CLP SYSTEM</div><div style="font-size:15px;opacity:0.8;margin-top:5px;">Busan New Port Center | Logistics Management</div></div>', unsafe_allow_html=True)
@@ -53,40 +55,28 @@ with st.sidebar:
 <tr><td style="color:#007bff;font-weight:bold;">LOAD방향</td><td style="color:#007bff;font-weight:bold;">P 열</td><td>선택</td></tr>
 </table>
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
-<b>REMARK 키워드</b><br>
+<b>REMARK 키워드 (O열)</b><br>
 · <b>BOX</b> : Q'ty = 실제 박스 수<br>
 · <b>N단</b> (예: 2단, 5단) : 숫자만큼 다단적재<br>
-· 복합 예시: <code>BOX 3단</code>, <code>5단 BOX</code>
 </div>
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
 <b>LOAD방향 제어 (P열)</b><br>
-· <b>FORK_W</b> : 긴 쪽을 컨테이너 폭으로 (지게차)<br>
-· <b>4WAY</b> : 효율 최우선 (방향 자유)<br>
-· <b>FORK_L</b> : 긴 쪽을 컨테이너 길이로
+· <b>FORK_L</b> : 긴 쪽을 길이로 눕힘 (화면상 가로)<br>
+· <b>FORK_W</b> : 긴 쪽을 폭으로 세움 (화면상 세로)<br>
+· <b>4WAY</b> : 빈틈없이 자동 최적화
 </div>""", unsafe_allow_html=True)
         st.markdown("---")
-        # 💡 오타 수정 완료: "REMARK":[""]
         tpl = {"Invoice No":[""],"No.of PKG":["PKG-001"],"LOCATION":[""],"ITEM":["SAMPLE ITEM"],
                "Description of Goods":["DETAIL DESC"],"Q'ty":[1],"UNIT":["EA"],
                "Net Weight (kg)":[500],"Gross Weight (kg)":[550],
                "Dimension L (mm)":[1200],"X1":["X"],"Dimension W (mm)":[1000],"X2":["X"],
-               "Dimension H (mm)":[2300],"REMARK":[""],"LOAD":["FORK_W"]}
+               "Dimension H (mm)":[2300],"REMARK":[""],"LOAD":["FORK_L"]}
         tow=io.BytesIO(); pd.DataFrame(tpl).to_excel(tow,index=False,engine='openpyxl')
         st.download_button("📥 신규 화주용 양식 다운로드",tow.getvalue(),"CALT_CLP_TEMPLATE.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
     st.header("⚙️ 배정 옵션 설정")
     
-    with st.expander("🔄 적재 방향 (LOAD) 설정", expanded=True):
-        st.markdown("**일반 화물 기본 방향**")
-        load_mode_ui = st.selectbox("포크 진입 방향 (기본값)", 
-                                    ["FORK_W (긴 쪽을 폭 W방향으로)", 
-                                     "4WAY (공간 최소화 자동 최적화)", 
-                                     "FORK_L (긴 쪽을 길이 L방향으로)"],
-                                    on_change=reset_data)
-        default_load_mode = load_mode_ui.split(" ")[0]
-        st.caption("※ P열에 지정된 키워드가 있으면 개별 설정이 우선합니다.")
-
     with st.expander("⚖️ 컨테이너 제원", expanded=False):
         st.markdown("**🟦 20ft DRY**")
         max_20_wt  = st.number_input("최대 중량 (kg)", 15000,40000,28250,key="i_20wt")
@@ -249,8 +239,20 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
 
 
-st.markdown("### 📤 패킹리스트 업로드 (드래그 앤 드롭)")
-file = st.file_uploader("이곳에 파일을 끌어다 놓으세요.", type=['csv','xlsx'], on_change=reset_data)
+# 💡 UI 변경: 사이드바에서 메인 화면 위쪽으로 이동 및 가로(라디오) 배치
+st.markdown("### 📤 기본 설정 및 패킹리스트 업로드")
+
+load_mode_ui = st.radio(
+    "👉 **지게차(포크) 기본 진입 방향을 선택하세요** (※ 엑셀 P열에 개별 지정된 값이 있으면 P열이 우선 적용됩니다)", 
+    ["FORK_L (긴 쪽을 가로로 눕힘)", 
+     "FORK_W (긴 쪽을 세로로 세움)", 
+     "4WAY (자동 최적화)"],
+    horizontal=True,
+    on_change=reset_data
+)
+default_load_mode = load_mode_ui.split(" ")[0]
+
+file = st.file_uploader("방향을 선택한 후 이곳에 파일을 끌어다 놓으세요.", type=['csv','xlsx'], on_change=reset_data)
 
 if file is not None:
     try:
