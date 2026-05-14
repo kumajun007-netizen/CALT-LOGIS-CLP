@@ -106,44 +106,36 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 
-# ★★★ 업그레이드된 적재 엔진 (단수 제한 + 이기종 혼합 적재 완벽 적용) ★★★
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     for orig_piece in pieces:
         piece = orig_piece.copy()
         piece['_stacked'] = []
         placed = False
         
-        # 0. 컨테이너 중량 초과 시 스킵 (다음 컨테이너로)
-        if b['total_W'] + piece['WEIGHT'] > max_wt:
-            continue
-            
         # 1. 기존 타워(바닥 화물 위)에 혼합 다단 적재 시도
-        for r in b['rows']:
-            for base_item in r['items']:
-                if '_stacked' not in base_item:
-                    base_item['_stacked'] = []
-                
-                # 맨 위 화물을 기준으로 면적 검사 (안정성)
-                top_item = base_item['_stacked'][-1] if base_item['_stacked'] else base_item
-                
-                # 룰 1: 얹을 화물의 면적이 맨 위 화물의 면적보다 작거나 같아야 함
-                if piece['L'] <= top_item['L'] and piece['W'] <= top_item['W']:
-                    current_h = base_item['H'] + sum(s['H'] for s in base_item['_stacked'])
-                    current_layers = 1 + len(base_item['_stacked'])
+        if b['total_W'] + piece['WEIGHT'] <= max_wt:
+            for r in b['rows']:
+                for base_item in r['items']:
+                    if '_stacked' not in base_item:
+                        base_item['_stacked'] = []
                     
-                    # 룰 2: 단수(MAX_STK) 제한 체크 (바닥과 얹을 화물 중 더 엄격한 기준 적용)
-                    limit_stk = min(base_item.get('MAX_STK', 1), piece.get('MAX_STK', 1))
-                    
-                    # 룰 3: 컨테이너 내부 높이 및 단수 제한 초과 여부 확인
-                    if current_h + piece['H'] <= max_h and current_layers < limit_stk:
-                        base_item['_stacked'].append(piece)
-                        if 'stacked_items' not in b: b['stacked_items'] = []
-                        b['stacked_items'].append(piece)
-                        b['total_W'] += piece['WEIGHT']
-                        b['groups'].add(piece['GROUP'])
-                        placed = True
-                        break
-            if placed: break
+                    # 위에 쌓는 화물이 바닥 화물의 크기를 넘지 않을 것 (실무 안정성)
+                    if piece['L'] <= base_item['L'] and piece['W'] <= base_item['W']:
+                        current_h = base_item['H'] + sum(s['H'] for s in base_item['_stacked'])
+                        current_layers = 1 + len(base_item['_stacked'])
+                        
+                        # 두 화물의 제한 단수 중 더 엄격한 것을 따름
+                        limit_stk = min(base_item.get('MAX_STK', 1), piece.get('MAX_STK', 1))
+                        
+                        if current_h + piece['H'] <= max_h and current_layers < limit_stk:
+                            base_item['_stacked'].append(piece)
+                            if 'stacked_items' not in b: b['stacked_items'] = []
+                            b['stacked_items'].append(piece)
+                            b['total_W'] += piece['WEIGHT']
+                            b['groups'].add(piece['GROUP'])
+                            placed = True
+                            break
+                if placed: break
                 
         if placed: continue
 
@@ -151,7 +143,7 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
         row_found = False
         for r in b['rows']:
             tL = max(r['max_L'], piece['L'])
-            if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (tL - r['max_L']) <= max_len:
+            if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (tL - r['max_L']) <= max_len and b['total_W'] + piece['WEIGHT'] <= max_wt:
                 r['items'].append(piece)
                 r['used_W'] += piece['W']
                 b['used_L'] += (tL - r['max_L'])
@@ -165,7 +157,7 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                 break
         
         if not row_found:
-            if b['used_L'] + piece['L'] <= max_len:
+            if b['used_L'] + piece['L'] <= max_len and b['total_W'] + piece['WEIGHT'] <= max_wt:
                 b['rows'].append({'items':[piece], 'used_W':piece['W'], 'max_L':piece['L']})
                 b['used_L'] += piece['L']
                 b['total_W'] += piece['WEIGHT']
@@ -215,11 +207,11 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
         
-        # FORK_L: L방향이 긴쪽 / FORK_W: W방향이 긴쪽
+        # FORK_L: 포크가 들어가는 방향이 긴 쪽이므로 컨테이너 배치상 W방향이 길어짐.
         if rule == 'FORK_L': 
-            el, ew = (lg, s) if s <= 2340 else (s, lg)
-        elif rule == 'FORK_W': 
             el, ew = (s, lg) if lg <= 2340 else (lg, s)
+        elif rule == 'FORK_W': 
+            el, ew = (lg, s) if s <= 2340 else (s, lg)
         else: 
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
@@ -230,7 +222,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    # 정렬: 큰 부피 우선 배치 (혼합적재 효율 향상), 동일 부피면 PKG 번호 순
+    # 정렬: 큰 부피 우선 (혼적 극대화), 동일 부피면 PKG 번호 순
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'],x['GROUP'])
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
@@ -357,7 +349,6 @@ if file is not None:
 
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
-            # --- 통일성 있게 개편된 KPI 섹션 ---
             st.subheader("📊 실시간 적재 요약")
             c1, c2, c3, c4 = st.columns(4)
             
@@ -435,6 +426,10 @@ if file is not None:
                                 curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                                 bf = count_items(curr_ob)
                                 pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                if count_items(curr_ob) == bf: 
+                                    curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
+                                    curr_ob['used_L']+=it['L']; curr_ob['total_W']+=it['WEIGHT']
+                                    curr_ob['max_W']=max(curr_ob['max_W'], it['W']); curr_ob['max_H']=max(curr_ob['max_H'], it['H'])
                         if curr_ob and count_items(curr_ob) > 0: upd.append(curr_ob)
                             
                     if h_ex: st.toast(f"🚨 {len(h_ex)}개 화물 H 초과! CLP 작성 시 확인하세요.")
@@ -448,15 +443,12 @@ if file is not None:
                     st.rerun()
 
                 base_items=[item for r in b['rows'] for item in r['items']]
-                base_min_L=min((i['L'] for i in base_items),default=0)
-                base_min_W=min((i['W'] for i in base_items),default=0)
                 t_data=[]
                 for r in b['rows']:
                     for item in r['items']: t_data.append({**item,'위치':'바닥','이동':f"{b['id']}번",'⚠️':''})
                 for s in b.get('stacked_items',[]):
-                    same=[i for i in base_items if i['L']==s['L'] and i['W']==s['W'] and i['H']==s['H']]
-                    danger='' if same else ('🚨' if (s['L']>base_min_L or s['W']>base_min_W) else '')
-                    t_data.append({**s,'위치':'단적/혼적','이동':f"{b['id']}번",'⚠️':danger})
+                    t_data.append({**s,'위치':'단적/혼적','이동':f"{b['id']}번",'⚠️':''})
+                    
                 df_edit=pd.DataFrame(t_data)[['⚠️','위치','PKG NO','ITEM','L','W','H','WEIGHT','이동']]
                 edited_df=st.data_editor(df_edit,hide_index=True,use_container_width=True,key=f"ed_{b['id']}",
                     column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=topts)},
@@ -537,6 +529,10 @@ if file is not None:
                                     curr_ob = {'id': mid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                                     bf = count_items(curr_ob)
                                     pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                    if count_items(curr_ob) == bf: 
+                                        curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
+                                        curr_ob['used_L'] += it['L']; curr_ob['total_W'] += it['WEIGHT']
+                                        curr_ob['max_W'] = max(curr_ob['max_W'], it['W']); curr_ob['max_H'] = max(curr_ob['max_H'], it['H'])
                             if curr_ob and count_items(curr_ob) > 0: repacked_bins.append(curr_ob)
 
                         repacked_labeled = apply_labels(repacked_bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt)
@@ -585,7 +581,6 @@ if file is not None:
                             border=dict(color="#FFD700",width=3) if layers>1 else dict(color="white",width=1)
                             fig.add_shape(type="rect",x0=cx,y0=cy,x1=cx+item['L'],y1=cy+item['W'],fillcolor=ic,opacity=0.85,line=border)
                             
-                            # 혼합적재 내역까지 모두 표시
                             if layers > 1: 
                                 stack_txt = "<br>+".join([f"{s['PKG NO']}(H{s['H']})" for s in stacked_list])
                                 lbl_txt = f"<b>{item['PKG NO']}</b><br>+ {stack_txt}"
