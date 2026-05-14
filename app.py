@@ -106,65 +106,78 @@ with st.sidebar:
         st.session_state['manual_mode'] = False
 
 
+# ★★★ 187대 생성 버그 원천 차단: True/False 반환형으로 로직 개선 ★★★
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
-    for orig_piece in pieces:
-        piece = orig_piece.copy()
-        piece['_stacked'] = []
+    placed_any = False
+    for piece in pieces:
         placed = False
         
-        # 1. 기존 타워(바닥 화물 위)에 혼합 다단 적재 시도
-        if b['total_W'] + piece['WEIGHT'] <= max_wt:
-            for r in b['rows']:
-                for base_item in r['items']:
-                    if '_stacked' not in base_item:
-                        base_item['_stacked'] = []
+        # 0. 컨테이너 중량 초과 시 스킵
+        if b['total_W'] + piece['WEIGHT'] > max_wt:
+            continue
+            
+        # 1. 다단 적재(혼합) 시도
+        for r in b['rows']:
+            for base_item in r['items']:
+                if '_stacked' not in base_item:
+                    base_item['_stacked'] = []
+                
+                top_item = base_item['_stacked'][-1] if base_item['_stacked'] else base_item
+                
+                if piece['L'] <= top_item['L'] and piece['W'] <= top_item['W']:
+                    current_h = base_item['H'] + sum(s['H'] for s in base_item['_stacked'])
+                    current_layers = 1 + len(base_item['_stacked'])
+                    limit_stk = min(base_item.get('MAX_STK', 1), piece.get('MAX_STK', 1))
                     
-                    # 위에 쌓는 화물이 바닥 화물의 크기를 넘지 않을 것 (실무 안정성)
-                    if piece['L'] <= base_item['L'] and piece['W'] <= base_item['W']:
-                        current_h = base_item['H'] + sum(s['H'] for s in base_item['_stacked'])
-                        current_layers = 1 + len(base_item['_stacked'])
-                        
-                        # 두 화물의 제한 단수 중 더 엄격한 것을 따름
-                        limit_stk = min(base_item.get('MAX_STK', 1), piece.get('MAX_STK', 1))
-                        
-                        if current_h + piece['H'] <= max_h and current_layers < limit_stk:
-                            base_item['_stacked'].append(piece)
-                            if 'stacked_items' not in b: b['stacked_items'] = []
-                            b['stacked_items'].append(piece)
-                            b['total_W'] += piece['WEIGHT']
-                            b['groups'].add(piece['GROUP'])
-                            placed = True
-                            break
-                if placed: break
+                    if current_h + piece['H'] <= max_h and current_layers < limit_stk:
+                        new_piece = piece.copy()
+                        new_piece['_stacked'] = []
+                        base_item['_stacked'].append(new_piece)
+                        if 'stacked_items' not in b: b['stacked_items'] = []
+                        b['stacked_items'].append(new_piece)
+                        b['total_W'] += new_piece['WEIGHT']
+                        b['groups'].add(new_piece['GROUP'])
+                        placed = True
+                        placed_any = True
+                        break
+            if placed: break
                 
         if placed: continue
 
-        # 2. 바닥에 빈 공간 찾아서 새로 깔기
+        # 2. 바닥에 빈 공간 찾아서 깔기
         row_found = False
         for r in b['rows']:
             tL = max(r['max_L'], piece['L'])
-            if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (tL - r['max_L']) <= max_len and b['total_W'] + piece['WEIGHT'] <= max_wt:
-                r['items'].append(piece)
-                r['used_W'] += piece['W']
+            if r['used_W'] + piece['W'] <= 2340 and b['used_L'] + (tL - r['max_L']) <= max_len:
+                new_piece = piece.copy()
+                new_piece['_stacked'] = []
+                r['items'].append(new_piece)
+                r['used_W'] += new_piece['W']
                 b['used_L'] += (tL - r['max_L'])
                 r['max_L'] = tL
-                b['total_W'] += piece['WEIGHT']
-                b['max_W'] = max(b['max_W'], piece['W'])
-                b['max_H'] = max(b['max_H'], piece['H'])
-                b['groups'].add(piece['GROUP'])
+                b['total_W'] += new_piece['WEIGHT']
+                b['max_W'] = max(b['max_W'], new_piece['W'])
+                b['max_H'] = max(b['max_H'], new_piece['H'])
+                b['groups'].add(new_piece['GROUP'])
                 row_found = True
                 placed = True
+                placed_any = True
                 break
         
         if not row_found:
-            if b['used_L'] + piece['L'] <= max_len and b['total_W'] + piece['WEIGHT'] <= max_wt:
-                b['rows'].append({'items':[piece], 'used_W':piece['W'], 'max_L':piece['L']})
-                b['used_L'] += piece['L']
-                b['total_W'] += piece['WEIGHT']
-                b['max_W'] = max(b['max_W'], piece['W'])
-                b['max_H'] = max(b['max_H'], piece['H'])
-                b['groups'].add(piece['GROUP'])
+            if b['used_L'] + piece['L'] <= max_len:
+                new_piece = piece.copy()
+                new_piece['_stacked'] = []
+                b['rows'].append({'items':[new_piece], 'used_W':new_piece['W'], 'max_L':new_piece['L']})
+                b['used_L'] += new_piece['L']
+                b['total_W'] += new_piece['WEIGHT']
+                b['max_W'] = max(b['max_W'], new_piece['W'])
+                b['max_H'] = max(b['max_H'], new_piece['H'])
+                b['groups'].add(new_piece['GROUP'])
                 placed = True
+                placed_any = True
+
+    return placed_any
 
 
 def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt):
@@ -207,7 +220,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
         
-        # FORK_L: 포크가 들어가는 방향이 긴 쪽이므로 컨테이너 배치상 W방향이 길어짐.
         if rule == 'FORK_L': 
             el, ew = (s, lg) if lg <= 2340 else (lg, s)
         elif rule == 'FORK_W': 
@@ -222,7 +234,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
             
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
-    # 정렬: 큰 부피 우선 (혼적 극대화), 동일 부피면 PKG 번호 순
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'],x['GROUP'])
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
@@ -235,12 +246,14 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         for piece in pieces:
             placed=False
             for b in bins:
-                pack_items_into_bin([piece],b,wt,ln,max_hc_h)
-                if piece in b.get('stacked_items',[]) or any(piece in r['items'] for r in b['rows']):
-                    placed=True; break
+                if pack_items_into_bin([piece], b, wt, ln, max_hc_h):
+                    placed=True
+                    break
             if not placed:
                 nb={'id':c,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                pack_items_into_bin([piece],nb,wt,ln,max_hc_h); bins.append(nb); c+=1
+                pack_items_into_bin([piece], nb, wt, ln, max_hc_h)
+                bins.append(nb)
+                c+=1
         return [b for b in bins if b['used_L']>0 or b.get('stacked_items')], c
 
     def _fill(bins, cands, mwt=None, mlen=None):
@@ -248,10 +261,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         rem=list(cands)
         for b in sorted(bins,key=lambda x:x['used_L']):
             for piece in list(rem):
-                before=sum(len(r['items']) for r in b['rows'])+len(b.get('stacked_items',[]))
-                pack_items_into_bin([piece],b,wt,ln,max_hc_h)
-                after=sum(len(r['items']) for r in b['rows'])+len(b.get('stacked_items',[]))
-                if after>before: rem.remove(piece)
+                if pack_items_into_bin([piece], b, wt, ln, max_hc_h):
+                    rem.remove(piece)
         return rem
 
     fr_bins,c = _pack(fr_p,1,max_fr40_wt,max_fr40_len)
@@ -394,9 +405,8 @@ if file is not None:
                     nb={'id':b['id'],'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                     ov=[]
                     for it in all_it:
-                        bf=count_items(nb)
-                        pack_items_into_bin([it],nb,sp['mw'],sp['ml'],sp['mh'])
-                        if count_items(nb)==bf: ov.append(it)
+                        if not pack_items_into_bin([it], nb, sp['mw'], sp['ml'], sp['mh']):
+                            ov.append(it)
                     
                     h_ex=[i for i in ([x for r in nb['rows'] for x in r['items']]+nb.get('stacked_items',[])) if i['H']>sp['mh']]
                     nb['c_label']=f"{sp['lb']} #{b['id']}"; nb['forced_label']=True
@@ -417,19 +427,13 @@ if file is not None:
                         for it in ov:
                             placed = False
                             if curr_ob:
-                                bf = count_items(curr_ob)
-                                pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                if count_items(curr_ob) > bf: placed = True
+                                if pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h):
+                                    placed = True
                             if not placed:
                                 if curr_ob and count_items(curr_ob) > 0: upd.append(curr_ob)
                                 mid += 1
                                 curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                                bf = count_items(curr_ob)
                                 pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                if count_items(curr_ob) == bf: 
-                                    curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
-                                    curr_ob['used_L']+=it['L']; curr_ob['total_W']+=it['WEIGHT']
-                                    curr_ob['max_W']=max(curr_ob['max_W'], it['W']); curr_ob['max_H']=max(curr_ob['max_H'], it['H'])
                         if curr_ob and count_items(curr_ob) > 0: upd.append(curr_ob)
                             
                     if h_ex: st.toast(f"🚨 {len(h_ex)}개 화물 H 초과! CLP 작성 시 확인하세요.")
@@ -502,9 +506,8 @@ if file is not None:
                             items = sorted(items_to_repack[tid], key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                             nb = {'id': tid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             for it in items:
-                                bf = count_items(nb)
-                                pack_items_into_bin([it], nb, cmw, cml, cmh)
-                                if count_items(nb) == bf: overflow_items.append(it)
+                                if not pack_items_into_bin([it], nb, cmw, cml, cmh):
+                                    overflow_items.append(it)
                             if count_items(nb) > 0: repacked_bins.append(nb)
 
                         new_items = items_to_repack.get('NEW', []) + overflow_items
@@ -520,19 +523,12 @@ if file is not None:
                             for it in new_items:
                                 placed = False
                                 if curr_ob:
-                                    bf = count_items(curr_ob)
-                                    pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                    if count_items(curr_ob) > bf: placed = True
+                                    if pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h): placed = True
                                 if not placed:
                                     if curr_ob and count_items(curr_ob) > 0: repacked_bins.append(curr_ob)
                                     mid += 1
                                     curr_ob = {'id': mid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
-                                    bf = count_items(curr_ob)
                                     pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                    if count_items(curr_ob) == bf: 
-                                        curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
-                                        curr_ob['used_L'] += it['L']; curr_ob['total_W'] += it['WEIGHT']
-                                        curr_ob['max_W'] = max(curr_ob['max_W'], it['W']); curr_ob['max_H'] = max(curr_ob['max_H'], it['H'])
                             if curr_ob and count_items(curr_ob) > 0: repacked_bins.append(curr_ob)
 
                         repacked_labeled = apply_labels(repacked_bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt)
