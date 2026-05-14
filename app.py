@@ -100,16 +100,13 @@ with st.sidebar:
     if st.button("🔄 AI 재계산 실행"):
         st.session_state['manual_mode'] = False
 
-
 def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
     for piece in pieces:
         placed = False
         max_stk = piece.get('MAX_STK', 1)
-        
         if max_stk > 1 and b['total_W'] + piece['WEIGHT'] <= max_wt:
             dim = (piece['L'], piece['W'], piece['H'])
             base_cnt = sum(1 for r in b['rows'] for i in r['items'] if (i['L'], i['W'], i['H']) == dim)
-            
             if base_cnt > 0:
                 stk_cnt = sum(1 for s in b.get('stacked_items', []) if (s['L'], s['W'], s['H']) == dim)
                 if stk_cnt < (max_stk - 1) * base_cnt:
@@ -121,7 +118,6 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                         b['groups'].add(piece['GROUP'])
                         placed = True
                         continue
-                        
         if not placed:
             row_found = False
             for r in b['rows']:
@@ -131,14 +127,12 @@ def pack_items_into_bin(pieces, b, max_wt, max_len, max_h=2670):
                     r['max_L']=tL; b['total_W']+=piece['WEIGHT']
                     b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
                     b['groups'].add(piece['GROUP']); row_found=True; placed=True; break
-            
             if not row_found:
                 if b['used_L']+piece['L']<=max_len and b['total_W']+piece['WEIGHT']<=max_wt:
                     b['rows'].append({'items':[piece],'used_W':piece['W'],'max_L':piece['L']})
                     b['used_L']+=piece['L']; b['total_W']+=piece['WEIGHT']
                     b['max_W']=max(b['max_W'],piece['W']); b['max_H']=max(b['max_H'],piece['H'])
                     b['groups'].add(piece['GROUP']); placed=True
-
 
 def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt):
     for b in bins:
@@ -156,15 +150,12 @@ def apply_labels(bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len,
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
-
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, max_dry_h, max_hc_h, load_mode):
     raw = []
     for _, row in df.iterrows():
         l,w,h,wt = int(row['L']+.5),int(row['W']+.5),int(row['H']+.5),int(row['WEIGHT']+.5)
-        
         nums = re.findall(r'\d+', str(row['PKG NO']))
         p_seq = int("".join(nums)) if nums else 999999
-
         raw.append({**row.to_dict(),'L':l,'W':w,'H':h,'WEIGHT':wt, 'p_seq': p_seq})
 
     sg={}
@@ -172,11 +163,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
         rule = p.get('LOAD_KW', '')
         if rule not in ['FORK_L', 'FORK_W', '4WAY']:
             rule = load_mode 
-        
         is_fr_size = max(p['L'], p['W']) > 2340 or p['H'] > max_hc_h
-        if is_fr_size:
-            rule = '4WAY' 
-            
+        if is_fr_size: rule = '4WAY' 
         p['eff_rule'] = rule
         key=(min(p['L'],p['W']),max(p['L'],p['W']),p['H']>max_dry_h, rule)
         sg.setdefault(key,[]).append(p)
@@ -184,11 +172,8 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     all_pieces=[]
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
-        
-        if rule == 'FORK_L':
-            el, ew = (s, lg) if ca else (lg, s)
-        elif rule == 'FORK_W':
-            el, ew = (lg, s) if cb else (s, lg)
+        if rule == 'FORK_L': el, ew = (s, lg) if ca else (lg, s)
+        elif rule == 'FORK_W': el, ew = (lg, s) if cb else (s, lg)
         else: 
             if ca and cb:
                 sa=max(1,int(2340//lg)); sb=max(1,int(2340//s))
@@ -196,11 +181,9 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
                 el,ew=(lg,s) if (Lb<La and sb>=2) else (s,lg)
             elif cb: el,ew=lg,s
             else: el,ew=s,lg
-            
         for p in items: all_pieces.append({**p,'L':el,'W':ew})
 
     sk=lambda x:(-x['W'],-x['H'],-x['L'],x['p_seq'],x['GROUP'])
-    
     fr_p  = sorted([p for p in all_pieces if p['W']>2340 or p['H']>max_hc_h], key=sk)
     hc_p  = sorted([p for p in all_pieces if p['W']<=2340 and max_dry_h<p['H']<=max_hc_h], key=sk)
     dry_p = sorted([p for p in all_pieces if p['W']<=2340 and p['H']<=max_dry_h], key=sk)
@@ -247,9 +230,7 @@ st.markdown("### 📤 기본 설정 및 패킹리스트 업로드")
 
 load_mode_ui = st.radio(
     "👉 **지게차(포크) 기본 진입 방향 설정** (※ P열 개별 지정 우선)", 
-    ["FORK_L", "FORK_W", "4WAY"],
-    horizontal=True,
-    on_change=reset_data
+    ["FORK_L", "FORK_W", "4WAY"], horizontal=True, on_change=reset_data
 )
 default_load_mode = load_mode_ui
 
@@ -293,7 +274,6 @@ if file is not None:
                 ms = int(match.group(1)) if match else 1
                 
                 load_val = str(row.iloc[COL_LOAD]).strip().upper() if (len(row) > COL_LOAD and pd.notna(row.iloc[COL_LOAD])) else ""
-                
                 if "FORK_W" in load_val: load_kw = "FORK_W"
                 elif "FORK_L" in load_val: load_kw = "FORK_L"
                 elif "4WAY" in load_val: load_kw = "4WAY"
@@ -327,7 +307,7 @@ if file is not None:
                     if k in lbl: return {'20ft Flat Rack':'20ft FR','40ft Flat Rack':'40ft FR'}.get(k,k)
                 return '40ft Dry'
 
-            # --- 화물 개수 카운트 헬퍼 함수 ---
+            # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
             st.subheader("📊 실시간 적재 요약")
@@ -346,47 +326,63 @@ if file is not None:
                     index=list(TYPE_SPECS.keys()).index(cur_type) if cur_type in TYPE_SPECS else 1,
                     key=f"ts_{b['id']}",label_visibility="collapsed")
                 
-                # ★★★ 타입 변경 시 오버플로우 화물 캐치 로직 수정 ★★★
+                # [수정] 타입 변경 적용
                 if hc3.button("🔄",key=f"rc_{b['id']}"):
-                    sp=TYPE_SPECS[new_type]; all_it=[i for r in b['rows'] for i in r['items']]+b.get('stacked_items',[])
+                    sp=TYPE_SPECS[new_type]
+                    all_it=[i for r in b['rows'] for i in r['items']]+b.get('stacked_items',[])
+                    # 정렬을 유지하며 담기
+                    all_it = sorted(all_it, key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                     nb={'id':b['id'],'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                     ov=[]
                     for it in all_it:
-                        bf = count_items(nb)
+                        bf=count_items(nb)
                         pack_items_into_bin([it],nb,sp['mw'],sp['ml'],sp['mh'])
-                        if count_items(nb) == bf: ov.append(it) # 안 들어간 화물 캐치
-                        
+                        if count_items(nb)==bf: ov.append(it)
+                    
                     h_ex=[i for i in ([x for r in nb['rows'] for x in r['items']]+nb.get('stacked_items',[])) if i['H']>sp['mh']]
                     nb['c_label']=f"{sp['lb']} #{b['id']}"; nb['forced_label']=True
                     
                     upd=[]
+                    # 핵심: 다른 건드리지 않은 컨테이너는 원래 상태 '그대로' 보존
                     for bx in st.session_state.bins:
                         upd.append(nb if bx['id']==b['id'] else bx)
                     
-                    # 튕겨져 나온 화물(ov)을 허공에 버리지 않고 새 컨테이너들에 밀어넣음
+                    # 튕겨나온(증발할뻔한) 화물들 안전하게 새 컨테이너로 강제 배정
                     if ov:
+                        st.toast(f"⚠️ {len(ov)}개 화물 제원 초과 → 새 컨테이너로 분리됐습니다.")
+                        ov = sorted(ov, key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                         mid=max(bx['id'] for bx in upd)
                         curr_ob = None
-                        for it in ov:
-                            if not curr_ob:
-                                mid += 1
-                                curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                                upd.append(curr_ob)
-                            
-                            bf = count_items(curr_ob)
-                            pack_items_into_bin([it], curr_ob, max_40_wt, max_40_len, max_hc_h)
-                            
-                            # 새 거에 넣었는데도 꽉 차서 안 들어가면 또 새 컨테이너 생성
-                            if count_items(curr_ob) == bf:
-                                mid += 1
-                                curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                                pack_items_into_bin([it], curr_ob, max_40_wt, max_40_len, max_hc_h)
-                                upd.append(curr_ob)
-                        st.toast(f"⚠️ {len(ov)}개 화물이 제원 초과로 분리되었습니다.", icon="🚨")
+                        abs_wt = max(max_40_wt, max_fr40_wt)
+                        abs_len = max(max_40_len, max_fr40_len)
+                        abs_h = max(max_hc_h, max_fr_h)
                         
+                        for it in ov:
+                            placed = False
+                            if curr_ob:
+                                bf = count_items(curr_ob)
+                                pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                if count_items(curr_ob) > bf: placed = True
+                            if not placed:
+                                if curr_ob and count_items(curr_ob) > 0: upd.append(curr_ob)
+                                mid += 1
+                                curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
+                                bf = count_items(curr_ob)
+                                pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                if count_items(curr_ob) == bf: # 최후의 안전망: 강제 삽입
+                                    curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
+                                    curr_ob['used_L']+=it['L']; curr_ob['total_W']+=it['WEIGHT']
+                                    curr_ob['max_W']=max(curr_ob['max_W'], it['W']); curr_ob['max_H']=max(curr_ob['max_H'], it['H'])
+                        if curr_ob and count_items(curr_ob) > 0: upd.append(curr_ob)
+                            
                     if h_ex: st.toast(f"🚨 {len(h_ex)}개 화물 H 초과! CLP 작성 시 확인하세요.")
+                    
                     st.session_state.bins=apply_labels(sorted(upd,key=lambda x:x['id']),
                         max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
+                    
+                    for idx, bx in enumerate(st.session_state.bins):
+                        if bx.get('forced_label'): bx['c_label'] = re.sub(r'#\d+', f"#{idx+1}", bx['c_label'])
+                        bx['id'] = idx + 1
                     st.rerun()
 
                 base_items=[item for r in b['rows'] for item in r['items']]
@@ -404,56 +400,94 @@ if file is not None:
                     column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=topts)},
                     disabled=['⚠️','위치','PKG NO','ITEM','L','W','H','WEIGHT'])
 
-                # ★★★ 수동 이동 시 오버플로우 화물 캐치 로직 수정 ★★★
+                # [수정] 수동 이동 적용 로직 개선
                 if st.button(f"🚀 {b['id']}번 변경사항 적용",key=f"btn_{b['id']}"):
                     moves=[(r['PKG NO'],r['이동']) for _,r in edited_df.iterrows() if r['이동']!=f"{b['id']}번"]
                     if moves:
+                        from collections import defaultdict
                         move_dict = dict(moves)
-                        mid=max(bx['id'] for bx in st.session_state.bins)
-                        nd={}
-                        overflow=[] # 사라지던 화물들을 임시 보관할 리스트
+                        source_bin_id = b['id']
+                        target_bin_ids = set()
+                        for mt in move_dict.values():
+                            if "새" not in mt: target_bin_ids.add(int(mt.replace("번","")))
+                        modified_ids = target_bin_ids | {source_bin_id}
+
+                        new_bins = []
+                        items_to_repack = defaultdict(list)
                         
+                        # 핵심: 수정과 무관한 컨테이너(new_bins)는 아예 손대지 않고 통째로 복사
                         for bx in st.session_state.bins:
-                            for item in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
-                                tgt=bx['id']
-                                if str(item['PKG NO']) in move_dict:
-                                    mt = move_dict[str(item['PKG NO'])]
-                                    tgt=mid+1 if "새" in mt else int(mt.replace("번",""))
-                                
-                                if tgt not in nd: 
-                                    nd[tgt]={'id':tgt,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                                
-                                bf = count_items(nd[tgt])
-                                pack_items_into_bin([item], nd[tgt], max_40_wt, max_40_len, max_hc_h)
-                                # 꽉 차서 못 들어간 화물을 낚아채서 overflow에 넣음
-                                if count_items(nd[tgt]) == bf:
-                                    overflow.append(item)
+                            if bx['id'] not in modified_ids:
+                                new_bins.append(bx)
+                            else:
+                                items_in_bx = [i for r in bx['rows'] for i in r['items']] + bx.get('stacked_items', [])
+                                for it in items_in_bx:
+                                    pkg = str(it['PKG NO'])
+                                    if bx['id'] == source_bin_id and pkg in move_dict:
+                                        mt = move_dict[pkg]
+                                        if "새" in mt: items_to_repack['NEW'].append(it)
+                                        else: items_to_repack[int(mt.replace("번",""))].append(it)
+                                    else:
+                                        items_to_repack[bx['id']].append(it)
+
+                        repacked_bins = []
+                        overflow_items = []
                         
-                        # 버려질 뻔한 overflow 화물들을 새 컨테이너들에 밀어넣음
-                        curr_mid = max(list(nd.keys()) + [mid])
-                        for item in overflow:
-                            placed = False
-                            if curr_mid in nd:
-                                bf = count_items(nd[curr_mid])
-                                pack_items_into_bin([item], nd[curr_mid], max_40_wt, max_40_len, max_hc_h)
-                                if count_items(nd[curr_mid]) > bf: placed = True
+                        def get_limits(tid):
+                            old_bx = next((x for x in st.session_state.bins if x['id'] == tid), None)
+                            if old_bx:
+                                lbl = old_bx['c_label']
+                                if '20ft Dry' in lbl: return max_20_wt, max_20_len, max_dry_h
+                                elif '40ft HC' in lbl: return max_40_wt, max_40_len, max_hc_h
+                                elif '40ft Dry' in lbl: return max_40_wt, max_40_len, max_dry_h
+                                elif '20ft Flat Rack' in lbl: return max_fr20_wt, max_fr20_len, max_fr_h
+                                elif '40ft Flat Rack' in lbl: return max_fr40_wt, max_fr40_len, max_fr_h
+                            return max_40_wt, max_40_len, max_hc_h
+
+                        for tid in modified_ids:
+                            if tid not in items_to_repack or not items_to_repack[tid]: continue
+                            cmw, cml, cmh = get_limits(tid)
+                            items = sorted(items_to_repack[tid], key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
+                            nb = {'id': tid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                            for it in items:
+                                bf = count_items(nb)
+                                pack_items_into_bin([it], nb, cmw, cml, cmh)
+                                if count_items(nb) == bf: overflow_items.append(it)
+                            if count_items(nb) > 0: repacked_bins.append(nb)
+
+                        new_items = items_to_repack.get('NEW', []) + overflow_items
+                        if new_items:
+                            if overflow_items: st.toast("⚠️ 공간 부족으로 넘친 화물을 새 컨테이너로 보호합니다.", icon="🚨")
+                            new_items = sorted(new_items, key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
+                            abs_wt = max(max_40_wt, max_fr40_wt)
+                            abs_len = max(max_40_len, max_fr40_len)
+                            abs_h = max(max_hc_h, max_fr_h)
+                            mid = max([x['id'] for x in st.session_state.bins] + [x['id'] for x in repacked_bins] + [0])
+                            curr_ob = None
                             
-                            if not placed:
-                                curr_mid += 1
-                                nd[curr_mid] = {'id':curr_mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
-                                pack_items_into_bin([item], nd[curr_mid], max_40_wt, max_40_len, max_hc_h)
+                            for it in new_items:
+                                placed = False
+                                if curr_ob:
+                                    bf = count_items(curr_ob)
+                                    pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                    if count_items(curr_ob) > bf: placed = True
+                                if not placed:
+                                    if curr_ob and count_items(curr_ob) > 0: repacked_bins.append(curr_ob)
+                                    mid += 1
+                                    curr_ob = {'id': mid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
+                                    bf = count_items(curr_ob)
+                                    pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
+                                    if count_items(curr_ob) == bf: # 최후의 안전망 강제수납
+                                        curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
+                                        curr_ob['used_L'] += it['L']; curr_ob['total_W'] += it['WEIGHT']
+                                        curr_ob['max_W'] = max(curr_ob['max_W'], it['W']); curr_ob['max_H'] = max(curr_ob['max_H'], it['H'])
+                            if curr_ob and count_items(curr_ob) > 0: repacked_bins.append(curr_ob)
+
+                        repacked_labeled = apply_labels(repacked_bins, max_20_len, max_20_wt, max_dry_h, max_hc_h, max_fr20_len, max_fr20_wt, max_fr40_len, max_fr40_wt)
+                        final_bins = sorted(new_bins + repacked_labeled, key=lambda x: x['id'])
+                        for idx, fb in enumerate(final_bins): fb['id'] = idx + 1
                         
-                        # 완전히 비어있는 컨테이너 제거
-                        final_bins = [v for k, v in nd.items() if count_items(v) > 0]
-                        # 중간 번호가 비지 않도록 1번부터 차례대로 ID 재부여
-                        for idx, f_bin in enumerate(sorted(final_bins, key=lambda x:x['id'])):
-                            f_bin['id'] = idx + 1
-                            
-                        st.session_state.bins=apply_labels(final_bins,
-                            max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
-                        
-                        if overflow:
-                            st.toast("⚠️ 공간이 부족해 남겨진 화물들은 새 컨테이너로 분리 배정되었습니다.", icon="🚨")
+                        st.session_state.bins = final_bins
                         st.rerun()
 
                 with st.expander("👁️ 적재 단면도 및 제원 확인",expanded=False):
