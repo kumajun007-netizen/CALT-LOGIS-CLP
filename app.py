@@ -26,6 +26,11 @@ st.markdown(f"""<style>
 .essential {{ color:{ALERT_COLOR};font-weight:bold; }}
 /* 라디오 버튼 스타일 강조 */
 div.row-widget.stRadio > div {{ flex-direction:row; background-color:white; padding: 10px 20px; border-radius: 8px; border: 1px solid #e1e4e8; }}
+
+/* 커스텀 KPI 카드 디자인 */
+.kpi-card {{ background-color:white;padding:15px;border-radius:10px;border-left:5px solid {MAIN_COLOR};box-shadow:0 2px 4px rgba(0,0,0,0.05); height:100%; }}
+.kpi-title {{ font-size:14px; color:#555; margin-bottom:5px; }}
+.kpi-value {{ font-size:28px; font-weight:800; color:#111; }}
 </style>""", unsafe_allow_html=True)
 
 st.markdown(f'<div class="header-container"><div style="font-size:30px;font-weight:800;">CALT-LOGIS CLP SYSTEM</div><div style="font-size:15px;opacity:0.8;margin-top:5px;">Busan New Port Center | Logistics Management</div></div>', unsafe_allow_html=True)
@@ -225,7 +230,6 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for i,b in enumerate(bins): b['id']=i+1
     return apply_labels(bins,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
 
-
 st.markdown("### 📤 기본 설정 및 패킹리스트 업로드")
 
 load_mode_ui = st.radio(
@@ -310,11 +314,25 @@ if file is not None:
             # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
+            # --- [수정] 상세 KPI 섹션 적용 ---
             st.subheader("📊 실시간 적재 요약")
-            c1,c2,c3,c4=st.columns(4)
-            packed=sum(count_items(b) for b in bins)
-            c1.metric("전체 화물",f"{len(df)} PKG"); c2.metric("배정 완료",f"{packed} PKG")
-            c3.metric("컨테이너 수",f"{len(bins)} UNIT"); c4.metric("평균 중량",f"{sum(b['total_W'] for b in bins)/max(1, len(bins)):,.0f} kg")
+            c1, c2, c3, c4 = st.columns(4)
+            
+            packed = sum(count_items(b) for b in bins)
+            total_w = sum(b['total_W'] for b in bins)
+            
+            from collections import Counter as _C
+            # 컨테이너 라벨에서 뒤에 붙은 " #숫자"를 제거하고 종류만 추출
+            c_types = [re.sub(r' #\d+$', '', b['c_label']) for b in bins]
+            type_counts = _C(c_types)
+            
+            # 컨테이너 수 상세 내역 HTML 생성
+            breakdown_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in type_counts.items()])
+            
+            c1.markdown(f'<div class="kpi-card"><div class="kpi-title">전체 화물</div><div class="kpi-value">{len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 완료</div><div class="kpi-value">{packed} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="kpi-card"><div class="kpi-title">컨테이너 수 ({len(bins)} UNIT)</div><div style="margin-top:2px;">{breakdown_html}</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="kpi-card"><div class="kpi-title">총 중량</div><div class="kpi-value">{total_w:,.0f} <span style="font-size:16px;color:#777;font-weight:600;">kg</span></div></div>', unsafe_allow_html=True)
 
             for b in bins:
                 if b['used_L']==0 and not b.get('stacked_items'): continue
@@ -326,11 +344,9 @@ if file is not None:
                     index=list(TYPE_SPECS.keys()).index(cur_type) if cur_type in TYPE_SPECS else 1,
                     key=f"ts_{b['id']}",label_visibility="collapsed")
                 
-                # [수정] 타입 변경 적용
                 if hc3.button("🔄",key=f"rc_{b['id']}"):
                     sp=TYPE_SPECS[new_type]
                     all_it=[i for r in b['rows'] for i in r['items']]+b.get('stacked_items',[])
-                    # 정렬을 유지하며 담기
                     all_it = sorted(all_it, key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                     nb={'id':b['id'],'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                     ov=[]
@@ -343,11 +359,9 @@ if file is not None:
                     nb['c_label']=f"{sp['lb']} #{b['id']}"; nb['forced_label']=True
                     
                     upd=[]
-                    # 핵심: 다른 건드리지 않은 컨테이너는 원래 상태 '그대로' 보존
                     for bx in st.session_state.bins:
                         upd.append(nb if bx['id']==b['id'] else bx)
                     
-                    # 튕겨나온(증발할뻔한) 화물들 안전하게 새 컨테이너로 강제 배정
                     if ov:
                         st.toast(f"⚠️ {len(ov)}개 화물 제원 초과 → 새 컨테이너로 분리됐습니다.")
                         ov = sorted(ov, key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
@@ -369,7 +383,7 @@ if file is not None:
                                 curr_ob = {'id':mid,'rows':[],'used_L':0,'total_W':0,'max_W':0,'max_H':0,'stacked_items':[],'groups':set()}
                                 bf = count_items(curr_ob)
                                 pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                if count_items(curr_ob) == bf: # 최후의 안전망: 강제 삽입
+                                if count_items(curr_ob) == bf: 
                                     curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
                                     curr_ob['used_L']+=it['L']; curr_ob['total_W']+=it['WEIGHT']
                                     curr_ob['max_W']=max(curr_ob['max_W'], it['W']); curr_ob['max_H']=max(curr_ob['max_H'], it['H'])
@@ -400,7 +414,6 @@ if file is not None:
                     column_config={"이동":st.column_config.SelectboxColumn("🚚 이동",options=topts)},
                     disabled=['⚠️','위치','PKG NO','ITEM','L','W','H','WEIGHT'])
 
-                # [수정] 수동 이동 적용 로직 개선
                 if st.button(f"🚀 {b['id']}번 변경사항 적용",key=f"btn_{b['id']}"):
                     moves=[(r['PKG NO'],r['이동']) for _,r in edited_df.iterrows() if r['이동']!=f"{b['id']}번"]
                     if moves:
@@ -415,7 +428,6 @@ if file is not None:
                         new_bins = []
                         items_to_repack = defaultdict(list)
                         
-                        # 핵심: 수정과 무관한 컨테이너(new_bins)는 아예 손대지 않고 통째로 복사
                         for bx in st.session_state.bins:
                             if bx['id'] not in modified_ids:
                                 new_bins.append(bx)
@@ -477,7 +489,7 @@ if file is not None:
                                     curr_ob = {'id': mid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                                     bf = count_items(curr_ob)
                                     pack_items_into_bin([it], curr_ob, abs_wt, abs_len, abs_h)
-                                    if count_items(curr_ob) == bf: # 최후의 안전망 강제수납
+                                    if count_items(curr_ob) == bf: 
                                         curr_ob['rows'].append({'items':[it],'used_W':it['W'],'max_L':it['L']})
                                         curr_ob['used_L'] += it['L']; curr_ob['total_W'] += it['WEIGHT']
                                         curr_ob['max_W'] = max(curr_ob['max_W'], it['W']); curr_ob['max_H'] = max(curr_ob['max_H'], it['H'])
