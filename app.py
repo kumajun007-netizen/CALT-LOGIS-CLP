@@ -314,7 +314,6 @@ if file is not None:
             # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
-            # --- [수정] 통일성 있게 개편된 KPI 섹션 ---
             st.subheader("📊 실시간 적재 요약")
             c1, c2, c3, c4 = st.columns(4)
             
@@ -342,7 +341,7 @@ if file is not None:
             dry_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in dry_counts.items()])
             if not dry_html: dry_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 DRY/HC 컨테이너 없음</div>"
             
-            # KPI 카드 렌더링 (배정 수량 / 전체 수량 포맷 통일)
+            # KPI 카드 렌더링
             c1.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 화물 / 전체 화물</div><div class="kpi-value"><span style="color:{ACCENT_COLOR};">{packed}</span> / {len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
             c2.markdown(f'<div class="kpi-card"><div class="kpi-title">FR 컨테이너 ({fr_total} UNIT)</div><div style="margin-top:2px;">{fr_html}</div></div>', unsafe_allow_html=True)
             c3.markdown(f'<div class="kpi-card"><div class="kpi-title">DRY 컨테이너 ({dry_total} UNIT)</div><div style="margin-top:2px;">{dry_html}</div></div>', unsafe_allow_html=True)
@@ -473,6 +472,7 @@ if file is not None:
                         for tid in modified_ids:
                             if tid not in items_to_repack or not items_to_repack[tid]: continue
                             cmw, cml, cmh = get_limits(tid)
+                            # [핵심] 리패킹 시 데이터 순서 유지 (엑셀 다운로드 오류 방지)
                             items = sorted(items_to_repack[tid], key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                             nb = {'id': tid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             for it in items:
@@ -576,7 +576,8 @@ if file is not None:
             for bx in bins:
                 for item in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
                     rcc[item['row_idx']][bx['c_label']]+=1
-                    rdl[item['row_idx']].append((item['PKG NO'],bx['c_label'],item['L'],item['W'],item['H'],item['WEIGHT']))
+                    # [수정] 엑셀 다운로드 컬럼 밀림 방지 위해 데이터 튜플 순서를 Header에 맞게 조정 (PKG NO, L, W, H, WEIGHT, c_label)
+                    rdl[item['row_idx']].append((item['PKG NO'], item['L'], item['W'], item['H'], item['WEIGHT'], bx['c_label']))
             mapping={}
             for ri,ctr in rcc.items():
                 total=sum(ctr.values())
@@ -597,7 +598,10 @@ if file is not None:
                         sc=ws.cell(row=er,column=tc-1); dc=ws.cell(row=er,column=tc)
                         dc.font=copy(sc.font); dc.fill=copy(sc.fill); dc.border=copy(sc.border); dc.alignment=copy(sc.alignment)
                 ws.column_dimensions[tl].width=30
-                box_det=[(p,lb,l,w,h,wt) for ri,dets in rdl.items() if len(dets)>1 for p,lb,l,w,h,wt in dets]
+                
+                # [수정] 엑셀 다운로드 오류 수정 사항 반영
+                box_det=[(p, l, w, h, wt, lb) for ri,dets in rdl.items() if len(dets)>1 for p, l, w, h, wt, lb in dets]
+                
                 if box_det:
                     if "배정상세" in wb.sheetnames: del wb["배정상세"]
                     wd=wb.create_sheet("배정상세")
