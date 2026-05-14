@@ -61,9 +61,9 @@ with st.sidebar:
 </div>
 <div style='font-size:10px;color:#555;margin-top:8px;line-height:1.7;'>
 <b>LOAD방향 제어 (P열)</b><br>
-· <b>FORK_L</b> : 긴 쪽을 길이로 눕힘 (화면상 가로)<br>
-· <b>FORK_W</b> : 긴 쪽을 폭으로 세움 (화면상 세로)<br>
-· <b>4WAY</b> : 빈틈없이 자동 최적화
+· <b>FORK_L</b><br>
+· <b>FORK_W</b><br>
+· <b>4WAY</b>
 </div>""", unsafe_allow_html=True)
         st.markdown("---")
         tpl = {"Invoice No":[""],"No.of PKG":["PKG-001"],"LOCATION":[""],"ITEM":["SAMPLE ITEM"],
@@ -76,7 +76,6 @@ with st.sidebar:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
     st.header("⚙️ 배정 옵션 설정")
-    
     with st.expander("⚖️ 컨테이너 제원", expanded=False):
         st.markdown("**🟦 20ft DRY**")
         max_20_wt  = st.number_input("최대 중량 (kg)", 15000,40000,28250,key="i_20wt")
@@ -167,7 +166,7 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     sg={}
     for p in raw:
         rule = p.get('LOAD_KW', '')
-        if rule not in ['FORK_W', 'FORK_L', '4WAY']:
+        if rule not in ['FORK_L', 'FORK_W', '4WAY']:
             rule = load_mode 
         
         is_fr_size = max(p['L'], p['W']) > 2340 or p['H'] > max_hc_h
@@ -182,9 +181,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     for (s,lg,_,rule),items in sg.items():
         n=len(items); ca=lg<=2340; cb=s<=2340
         
-        if rule == 'FORK_W':
+        # 💡 로직 스왑 적용 완료
+        if rule == 'FORK_L':
+            # 지게차가 긴 쪽(L)으로 진입 -> 긴 쪽이 컨테이너의 폭(W) 방향으로 향함 (가로 눕힘)
             el, ew = (s, lg) if ca else (lg, s)
-        elif rule == 'FORK_L':
+        elif rule == 'FORK_W':
+            # 지게차가 짧은 쪽(W)으로 진입 -> 긴 쪽이 컨테이너의 길이(L) 방향으로 향함 (세로 세움)
             el, ew = (lg, s) if cb else (s, lg)
         else: # 4WAY
             if ca and cb:
@@ -239,18 +241,16 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len, m
     return apply_labels(bins,max_20_len,max_20_wt,max_dry_h,max_hc_h,max_fr20_len,max_fr20_wt,max_fr40_len,max_fr40_wt)
 
 
-# 💡 UI 변경: 사이드바에서 메인 화면 위쪽으로 이동 및 가로(라디오) 배치
+# 💡 UI 텍스트 간소화 완료
 st.markdown("### 📤 기본 설정 및 패킹리스트 업로드")
 
 load_mode_ui = st.radio(
-    "👉 **지게차(포크) 기본 진입 방향을 선택하세요** (※ 엑셀 P열에 개별 지정된 값이 있으면 P열이 우선 적용됩니다)", 
-    ["FORK_L (긴 쪽을 가로로 눕힘)", 
-     "FORK_W (긴 쪽을 세로로 세움)", 
-     "4WAY (자동 최적화)"],
+    "👉 **지게차(포크) 기본 진입 방향 설정** (※ P열 개별 지정 우선)", 
+    ["FORK_L", "FORK_W", "4WAY"],
     horizontal=True,
     on_change=reset_data
 )
-default_load_mode = load_mode_ui.split(" ")[0]
+default_load_mode = load_mode_ui
 
 file = st.file_uploader("방향을 선택한 후 이곳에 파일을 끌어다 놓으세요.", type=['csv','xlsx'], on_change=reset_data)
 
