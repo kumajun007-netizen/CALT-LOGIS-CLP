@@ -311,7 +311,6 @@ if file is not None:
                     if k in lbl: return {'20ft Flat Rack':'20ft FR','40ft Flat Rack':'40ft FR'}.get(k,k)
                 return '40ft Dry'
 
-            # 헬퍼 함수 (박스 개수 세기)
             count_items = lambda bx: sum(len(r['items']) for r in bx['rows']) + len(bx.get('stacked_items',[]))
 
             st.subheader("📊 실시간 적재 요약")
@@ -319,29 +318,24 @@ if file is not None:
             
             packed = sum(count_items(b) for b in bins)
             total_w = sum(b['total_W'] for b in bins)
-            raw_total_w = sum(df['WEIGHT']) # 전체 화물의 총 중량 계산
+            raw_total_w = sum(df['WEIGHT']) 
             
             from collections import Counter as _C
-            # 컨테이너 라벨에서 뒤에 붙은 " #숫자"를 제거하고 종류만 추출
             c_types = [re.sub(r' #\d+$', '', b['c_label']) for b in bins]
             type_counts = _C(c_types)
             
-            # FR과 DRY/HC 분류
             fr_counts = {k: v for k, v in type_counts.items() if 'Flat Rack' in k or 'FR' in k}
             dry_counts = {k: v for k, v in type_counts.items() if 'Dry' in k or 'HC' in k}
             
             fr_total = sum(fr_counts.values())
             dry_total = sum(dry_counts.values())
 
-            # FR HTML 생성
             fr_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in fr_counts.items()])
             if not fr_html: fr_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 FR 컨테이너 없음</div>"
 
-            # DRY/HC HTML 생성
             dry_html = "".join([f"<div style='font-size:13px; color:#444; margin-top:4px;'>· {k} <b style='color:{ACCENT_COLOR}; font-size:15px;'>{v}</b> 대</div>" for k, v in dry_counts.items()])
             if not dry_html: dry_html = "<div style='font-size:13px; color:#999; margin-top:4px;'>배정된 DRY/HC 컨테이너 없음</div>"
             
-            # KPI 카드 렌더링
             c1.markdown(f'<div class="kpi-card"><div class="kpi-title">배정 화물 / 전체 화물</div><div class="kpi-value"><span style="color:{ACCENT_COLOR};">{packed}</span> / {len(df)} <span style="font-size:16px;color:#777;font-weight:600;">PKG</span></div></div>', unsafe_allow_html=True)
             c2.markdown(f'<div class="kpi-card"><div class="kpi-title">FR 컨테이너 ({fr_total} UNIT)</div><div style="margin-top:2px;">{fr_html}</div></div>', unsafe_allow_html=True)
             c3.markdown(f'<div class="kpi-card"><div class="kpi-title">DRY 컨테이너 ({dry_total} UNIT)</div><div style="margin-top:2px;">{dry_html}</div></div>', unsafe_allow_html=True)
@@ -472,7 +466,6 @@ if file is not None:
                         for tid in modified_ids:
                             if tid not in items_to_repack or not items_to_repack[tid]: continue
                             cmw, cml, cmh = get_limits(tid)
-                            # [핵심] 리패킹 시 데이터 순서 유지 (엑셀 다운로드 오류 방지)
                             items = sorted(items_to_repack[tid], key=lambda x: (-x['W'], -x['H'], -x['L'], x['p_seq'], x['GROUP']))
                             nb = {'id': tid, 'rows': [], 'used_L': 0, 'total_W': 0, 'max_W': 0, 'max_H': 0, 'stacked_items': [], 'groups': set()}
                             for it in items:
@@ -576,7 +569,6 @@ if file is not None:
             for bx in bins:
                 for item in ([i for r in bx['rows'] for i in r['items']]+bx.get('stacked_items',[])):
                     rcc[item['row_idx']][bx['c_label']]+=1
-                    # [수정] 엑셀 다운로드 컬럼 밀림 방지 위해 데이터 튜플 순서를 Header에 맞게 조정 (PKG NO, L, W, H, WEIGHT, c_label)
                     rdl[item['row_idx']].append((item['PKG NO'], item['L'], item['W'], item['H'], item['WEIGHT'], bx['c_label']))
             mapping={}
             for ri,ctr in rcc.items():
@@ -599,7 +591,6 @@ if file is not None:
                         dc.font=copy(sc.font); dc.fill=copy(sc.fill); dc.border=copy(sc.border); dc.alignment=copy(sc.alignment)
                 ws.column_dimensions[tl].width=30
                 
-                # [수정] 엑셀 다운로드 오류 수정 사항 반영
                 box_det=[(p, l, w, h, wt, lb) for ri,dets in rdl.items() if len(dets)>1 for p, l, w, h, wt, lb in dets]
                 
                 if box_det:
