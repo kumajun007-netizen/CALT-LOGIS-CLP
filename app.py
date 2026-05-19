@@ -165,8 +165,14 @@ with st.sidebar:
         )
         global_load_mode = st.selectbox(
             "🚜 전체 LOAD 모드 (개별 P열 키워드 우선)",
-            ["일반 (폭 활용 최대화)", "FORK_W (긴쪽→W)", "FORK_L (긴쪽→L)", "4WAY (자유)"],
-            index=2  # 기본값 FORK_L (사용자 케이스)
+            ["일반 (폭 활용 최대화)",
+             "FORK_W (박스W면 포크진입 → 박스W가 컨테이너 폭 방향)",
+             "FORK_L (박스L면 포크진입 → 박스L이 컨테이너 폭 방향)",
+             "4WAY (자유 회전)"],
+            index=2,  # 기본값 FORK_L (사용자 케이스)
+            help="실무 기준: 포크 진입면이 컨테이너 입구를 향함. "
+                 "FORK_L=박스의 L치수가 컨테이너 폭(2350) 쪽으로, "
+                 "FORK_W=박스의 W치수가 컨테이너 폭 쪽으로 적재."
         )
 
     if st.button("🔄 AI 재계산 실행"):
@@ -193,22 +199,38 @@ def parse_load(load_str, global_mode):
         if 'FORK_L' in s: return 'FORK_L'
         if 'FORK_W' in s: return 'FORK_W'
         if '4WAY' in s: return '4WAY'
-    # 전체 모드 적용
-    if 'FORK_L' in global_mode: return 'FORK_L'
-    if 'FORK_W' in global_mode: return 'FORK_W'
-    if '4WAY' in global_mode: return '4WAY'
+    # 전체 모드 적용 — selectbox 라벨에 키워드가 포함되어 있으므로 부분일치로 검사
+    g = str(global_mode).upper()
+    if 'FORK_L' in g: return 'FORK_L'
+    if 'FORK_W' in g: return 'FORK_W'
+    if '4WAY' in g: return '4WAY'
     return None  # 일반
 
 def apply_rotation(l_raw, w_raw, load_mode, max_w_container):
-    """LOAD 키워드 기준으로 L/W 회전 결정"""
+    """
+    LOAD 키워드 기준으로 박스 회전 결정.
+    반환: (L_fit, W_fit) = (컨테이너 길이방향 차지값, 컨테이너 폭방향 차지값)
+
+    [실무 정의 — 칼트로지스 기준]
+    포크 진입면이 컨테이너 입구를 향해야 하므로, 진입면 치수는 컨테이너 폭 방향에 위치.
+
+    - FORK_L: 박스의 L면(=W면이 막힘)에서만 포크 진입 가능
+        → 박스의 L축이 컨테이너 W(폭) 방향에 평행
+        → 컨테이너 길이방향 차지 = 박스 W,  컨테이너 폭방향 차지 = 박스 L
+
+    - FORK_W: 박스의 W면(=L면이 막힘)에서만 포크 진입 가능
+        → 박스의 W축이 컨테이너 W(폭) 방향에 평행
+        → 컨테이너 길이방향 차지 = 박스 L,  컨테이너 폭방향 차지 = 박스 W
+
+    - 4WAY / 일반: 4방향 진입 가능 → 폭 활용 최대화
+        → 긴쪽이 컨테이너 폭에 들어가면 폭에 두고, 안 되면 길이에 둠
+    """
     if load_mode == 'FORK_L':
-        # 긴쪽을 L방향 (FR 빈공간 채우기)
-        return max(l_raw, w_raw), min(l_raw, w_raw)
+        return w_raw, l_raw
     elif load_mode == 'FORK_W':
-        # 긴쪽을 W방향 (LSE 기본)
-        return min(l_raw, w_raw), max(l_raw, w_raw)
+        return l_raw, w_raw
     else:
-        # 일반/4WAY: 폭 활용 최대화 (긴쪽이 컨테이너 폭에 들어가면 W로)
+        # 4WAY / 일반: 폭 활용 최대화
         if max(l_raw, w_raw) <= max_w_container:
             return min(l_raw, w_raw), max(l_raw, w_raw)
         else:
