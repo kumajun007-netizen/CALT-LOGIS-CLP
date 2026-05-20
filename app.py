@@ -157,11 +157,24 @@ with st.sidebar:
         balancing_eff = st.slider("균분적재 면적 효율 가정 (%)", 70, 100, 95, 1,
                                   help="높일수록 컨테이너 수 최소화. 낮추면 여유분 확보.")
         allow_stacking = st.checkbox("🏢 다단적재 (REMARK 2단/3단 반영)", value=True)
+        fr_combine = st.checkbox("🚂 FR 혼적 허용 (같은 FR에 여러 화물 적재)", value=True,
+                                 help="ON: FR 컨테이너 1대에 여러 OW/OH/OL 화물을 길이 합산해 적재. "
+                                      "OFF: 화물 1개당 FR 1대 (안전·화주 분리 요구 시).")
         force_container_type = st.selectbox(
-            "🏗 컨테이너 타입 강제 선정",
+            "🏗 컨테이너 타입 (패킹 가용 한계)",
             ["자동 (높이 기준)", "40ft HC 강제", "40ft DRY 강제"],
             index=1,  # 기본값 HC 강제
-            help="자동: 누적 H가 DRY 한계(2390mm) 초과 시에만 HC. 강제: 화주 요청 등 실무 케이스."
+            help="패킹 계산 시 사용 가능한 최대 높이 결정. "
+                 "자동: 누적 H가 DRY 한계(2390) 초과 시 HC. "
+                 "강제: 화주 요청 등 실무 케이스. "
+                 "최종 라벨은 아래 다운그레이드 옵션이 적용됨."
+        )
+        auto_downgrade = st.checkbox(
+            "📦 사이즈 자동 다운그레이드 (실제 사용량 기준 라벨링)",
+            value=True,
+            help="ON: 패킹은 40ft로 하더라도, 실제 사용 길이/높이가 작으면 20ft Dry/40ft Dry로 자동 라벨링. "
+                 "화주 보고·운임 산정 정확도 향상. "
+                 "OFF: 위 패킹 가용 한계 옵션 그대로 라벨링."
         )
         global_load_mode = st.selectbox(
             "🚜 전체 LOAD 모드 (개별 P열 키워드 우선)",
@@ -172,7 +185,8 @@ with st.sidebar:
             index=2,  # 기본값 FORK_L (사용자 케이스)
             help="실무 기준: 포크 진입면이 컨테이너 입구를 향함. "
                  "FORK_L=박스의 L치수가 컨테이너 폭(2350) 쪽으로, "
-                 "FORK_W=박스의 W치수가 컨테이너 폭 쪽으로 적재."
+                 "FORK_W=박스의 W치수가 컨테이너 폭 쪽으로 적재. "
+                 "박스 L > 2350인 경우 자동 회전 fallback 적용 (P열에 FORK_L_STRICT 입력 시 fallback 차단)."
         )
 
     if st.button("🔄 AI 재계산 실행"):
@@ -193,9 +207,20 @@ def parse_remark(remark_str):
     return {'layers': layers, 'is_box': is_box}
 
 def parse_load(load_str, global_mode):
-    """P열 LOAD 파싱: FORK_L / FORK_W / 4WAY. 개별 키워드 우선, 없으면 전체 모드"""
+    """
+    P열 LOAD 파싱: FORK_L / FORK_W / FORK_L_STRICT / 4WAY / FR_FORCE.
+    개별 키워드 우선, 없으면 전체 모드.
+
+    - FORK_L: 박스 L → 컨테이너 폭. 단 박스 L > 컨테이너 폭이면 자동 회전 fallback.
+    - FORK_L_STRICT: FORK_L 강제. fallback 차단. 박스 L > 컨테이너 폭이면 FR로 강제 이동.
+    - FORK_W: 박스 W → 컨테이너 폭. fallback 동일 규칙.
+    - 4WAY: 4방향 자유. 폭 활용 최대화 회전.
+    - FR_FORCE: 자동 분류 무시하고 FR로 강제 이동.
+    """
     if load_str is not None and not pd.isna(load_str):
         s = str(load_str).upper().strip()
+        if 'FR_FORCE' in s: return 'FR_FORCE'
+        if 'FORK_L_STRICT' in s: return 'FORK_L_STRICT'
         if 'FORK_L' in s: return 'FORK_L'
         if 'FORK_W' in s: return 'FORK_W'
         if '4WAY' in s: return '4WAY'
@@ -209,49 +234,133 @@ def parse_load(load_str, global_mode):
 def apply_rotation(l_raw, w_raw, load_mode, max_w_container):
     """
     LOAD 키워드 기준으로 박스 회전 결정.
-    반환: (L_fit, W_fit) = (컨테이너 길이방향 차지값, 컨테이너 폭방향 차지값)
+    반환: (L_fit, W_fit, status)
+      - L_fit: 컨테이너 길이방향 차지값
+      - W_fit: 컨테이너 폭방향 차지값
+      - status: 'OK' / 'FALLBACK' / 'IMPOSSIBLE'
 
     [실무 정의 — 칼트로지스 기준]
-    포크 진입면이 컨테이너 입구를 향해야 하므로, 진입면 치수는 컨테이너 폭 방향에 위치.
+    포크 진입면이 컨테이너 입구를 향해야 함 → 진입면 치수는 컨테이너 폭 방향에 위치.
 
-    - FORK_L: 박스의 L면(=W면이 막힘)에서만 포크 진입 가능
-        → 박스의 L축이 컨테이너 W(폭) 방향에 평행
-        → 컨테이너 길이방향 차지 = 박스 W,  컨테이너 폭방향 차지 = 박스 L
-
-    - FORK_W: 박스의 W면(=L면이 막힘)에서만 포크 진입 가능
-        → 박스의 W축이 컨테이너 W(폭) 방향에 평행
-        → 컨테이너 길이방향 차지 = 박스 L,  컨테이너 폭방향 차지 = 박스 W
-
-    - 4WAY / 일반: 4방향 진입 가능 → 폭 활용 최대화
-        → 긴쪽이 컨테이너 폭에 들어가면 폭에 두고, 안 되면 길이에 둠
+    [회전 우선순위]
+    - FORK_L: 1순위 박스L → 폭(L≤2350일 때). 2순위 박스W → 폭 (fallback). 둘 다 초과면 IMPOSSIBLE.
+    - FORK_L_STRICT: 1순위만. 박스L > 폭이면 IMPOSSIBLE (= FR로 강제 이동).
+    - FORK_W: 1순위 박스W → 폭. 2순위 박스L → 폭 (fallback). 둘 다 초과면 IMPOSSIBLE.
+    - 4WAY/일반: 폭 활용 최대화 (긴쪽이 폭에 들어가면 폭에).
     """
-    if load_mode == 'FORK_L':
-        return w_raw, l_raw
-    elif load_mode == 'FORK_W':
-        return l_raw, w_raw
-    else:
-        # 4WAY / 일반: 폭 활용 최대화
-        if max(l_raw, w_raw) <= max_w_container:
-            return min(l_raw, w_raw), max(l_raw, w_raw)
+    if load_mode == 'FORK_L_STRICT':
+        # 강제 FORK_L, fallback 차단
+        if l_raw <= max_w_container:
+            return w_raw, l_raw, 'OK'
         else:
-            return max(l_raw, w_raw), min(l_raw, w_raw)
+            return l_raw, w_raw, 'IMPOSSIBLE'  # → FR 처리
+
+    if load_mode == 'FORK_L':
+        # 1순위: 박스 L을 컨테이너 폭에
+        if l_raw <= max_w_container:
+            return w_raw, l_raw, 'OK'
+        # 2순위 (fallback): 박스 W를 컨테이너 폭에
+        elif w_raw <= max_w_container:
+            return l_raw, w_raw, 'FALLBACK'
+        else:
+            return l_raw, w_raw, 'IMPOSSIBLE'
+
+    if load_mode == 'FORK_W':
+        if w_raw <= max_w_container:
+            return l_raw, w_raw, 'OK'
+        elif l_raw <= max_w_container:
+            return w_raw, l_raw, 'FALLBACK'
+        else:
+            return l_raw, w_raw, 'IMPOSSIBLE'
+
+    # 4WAY / 일반: 폭 활용 최대화
+    if max(l_raw, w_raw) <= max_w_container:
+        return min(l_raw, w_raw), max(l_raw, w_raw), 'OK'
+    elif min(l_raw, w_raw) <= max_w_container:
+        return max(l_raw, w_raw), min(l_raw, w_raw), 'OK'
+    else:
+        return l_raw, w_raw, 'IMPOSSIBLE'
 
 # ===================================================================
-# --- 다단 묶음 → 풋프린트 단위 생성 ---
+# --- 화물 분류 (STANDARD / FR) ---
 # ===================================================================
-def build_footprints(df, max_w_container, allow_stack):
+def classify_cargo(piece, max_w_container, max_hc_h, max_40_len, allow_stack):
     """
-    같은 (PKG, 치수, 단수) 박스를 N단씩 묶어 풋프린트 단위로 만든다.
-    풋프린트 1개 = 컨테이너 바닥에 차지하는 면적 1개 = N단 누적된 박스 묶음.
+    화물 1개를 분류: 'STANDARD' or 'FR'
+    판정 순서 (실무 기준 그대로 적용, 임의 마진 없음):
+
+    1. P열 'FR_FORCE' → FR (실무자 강제)
+    2. 누적 H (단수×박스H) > HC 한계(2695) → OH → FR
+    3. min(L, W) > 컨테이너 폭(2350) → 회전해도 OW → FR
+    4. max(L, W) > 40ft L 한계(12034) → OL → FR
+    5. 그 외 → STANDARD
     """
-    # 박스 단위 리스트 (Q'ty 복제 완료 후 들어옴)
-    grouped = defaultdict(list)
+    l, w, h = piece['L_raw'], piece['W_raw'], piece['H_raw']
+    layers = piece['layers'] if allow_stack else 1
+    total_h = h * layers
+    load_mode = piece.get('load_mode')
+
+    # 1. FR 강제
+    if load_mode == 'FR_FORCE':
+        return 'FR', 'FR_FORCE'
+
+    # 2. OH (다단 후 누적)
+    if total_h > max_hc_h:
+        return 'FR', 'OH'
+
+    # 3. OW (회전 무관)
+    if min(l, w) > max_w_container:
+        return 'FR', 'OW'
+
+    # 4. OL (회전 무관)
+    if max(l, w) > max_40_len:
+        return 'FR', 'OL'
+
+    return 'STANDARD', None
+
+# ===================================================================
+# --- 다단 묶음 → 풋프린트 단위 생성 (STANDARD / FR 분리) ---
+# ===================================================================
+def build_footprints(df, max_w_container, max_hc_h, max_40_len, allow_stack):
+    """
+    화물을 STANDARD/FR로 분류 후 각각 풋프린트 생성.
+
+    [STANDARD 풀]
+    - 같은 (PKG, 치수, 단수, LOAD) 박스를 N단씩 묶어 풋프린트 단위로 만듦.
+    - apply_rotation 적용. status가 'IMPOSSIBLE'이면 FR로 재분류.
+
+    [FR 풀]
+    - 회전 없음 (박스 L 그대로 컨테이너 L 방향, 사용자 정의)
+    - 다단 적용 없음 (FR 화물은 단일 적재 원칙)
+    - 박스 1개당 풋프린트 1개
+
+    반환: (standard_fps, fr_fps, classify_summary)
+    """
+    standard_pieces = []
+    fr_pieces = []
+    classify_summary = defaultdict(int)
+
+    # 1차 분류
     for _, row in df.iterrows():
-        key = (row['PKG NO'], int(row['L_raw']), int(row['W_raw']), int(row['H_raw']),
-               row['layers'] if allow_stack else 1, row['load_mode'])
-        grouped[key].append(row.to_dict())
+        piece = row.to_dict()
+        cargo_type, reason = classify_cargo(piece, max_w_container, max_hc_h, max_40_len, allow_stack)
+        piece['fr_reason'] = reason
+        if cargo_type == 'FR':
+            fr_pieces.append(piece)
+            classify_summary[f"FR ({reason})"] += 1
+        else:
+            standard_pieces.append(piece)
+            classify_summary['STANDARD'] += 1
 
-    footprints = []
+    # STANDARD 풀 풋프린트 생성
+    standard_fps = []
+    grouped = defaultdict(list)
+    for r in standard_pieces:
+        layers_use = r['layers'] if allow_stack else 1
+        key = (r['PKG NO'], int(r['L_raw']), int(r['W_raw']), int(r['H_raw']),
+               layers_use, r['load_mode'])
+        grouped[key].append(r)
+
     for key, items in grouped.items():
         pkg, l_raw, w_raw, h_raw, layers, load_mode = key
         i = 0
@@ -259,24 +368,62 @@ def build_footprints(df, max_w_container, allow_stack):
             stack = items[i:i+layers]
             i += layers
             n = len(stack)
-            l_fit, w_fit = apply_rotation(l_raw, w_raw, load_mode, max_w_container)
+            l_fit, w_fit, rot_status = apply_rotation(l_raw, w_raw, load_mode, max_w_container)
+
+            # 회전 불가 → FR로 재분류
+            if rot_status == 'IMPOSSIBLE':
+                for s in stack:
+                    s['fr_reason'] = 'ROT_IMPOSSIBLE'
+                    fr_pieces.append(s)
+                    classify_summary[f"FR (ROT_IMPOSSIBLE)"] += 1
+                    classify_summary['STANDARD'] -= 1
+                continue
+
             fp = {
-                'PKG NO': stack[0]['PKG NO'],
+                'PKG NO': pkg,
                 'ITEM': stack[0].get('ITEM', '-'),
                 'GROUP': stack[0].get('GROUP', '-'),
-                'L': l_fit,  # 회전 후 L
-                'W': w_fit,  # 회전 후 W
-                'H': h_raw * n,  # 누적 높이
+                'L': l_fit,
+                'W': w_fit,
+                'H': h_raw * n,
                 'H_per_layer': h_raw,
                 'stack_count': n,
                 'WEIGHT': sum(s['WEIGHT'] for s in stack),
                 'load_mode': load_mode if load_mode else '-',
+                'rotation_status': rot_status,
                 'STACK_OK': n > 1,
-                'row_idx': stack[0]['row_idx'],  # 대표값
-                'sub_items': stack,  # 원본 박스들
+                'row_idx': stack[0]['row_idx'],
+                'sub_items': stack,
+                'cargo_type': 'STANDARD',
             }
-            footprints.append(fp)
-    return footprints
+            standard_fps.append(fp)
+
+    # FR 풀 풋프린트 생성 (회전 없음)
+    fr_fps = []
+    for piece in fr_pieces:
+        l, w, h = int(piece['L_raw']), int(piece['W_raw']), int(piece['H_raw'])
+        # FR: 박스 L → 컨테이너 L 그대로 (사용자 정의: 옆에서 적재하므로 L축 정렬)
+        fp = {
+            'PKG NO': piece['PKG NO'],
+            'ITEM': piece.get('ITEM', '-'),
+            'GROUP': piece.get('GROUP', '-'),
+            'L': l,  # 컨테이너 길이 방향 = 박스 L
+            'W': w,  # 컨테이너 폭 방향 = 박스 W (OW 가능)
+            'H': h,
+            'H_per_layer': h,
+            'stack_count': 1,
+            'WEIGHT': int(piece['WEIGHT']),
+            'load_mode': piece.get('load_mode') if piece.get('load_mode') else '-',
+            'rotation_status': 'FR_NO_ROTATE',
+            'STACK_OK': False,
+            'row_idx': piece['row_idx'],
+            'sub_items': [piece],
+            'cargo_type': 'FR',
+            'fr_reason': piece.get('fr_reason', '-'),
+        }
+        fr_fps.append(fp)
+
+    return standard_fps, fr_fps, dict(classify_summary)
 
 # ===================================================================
 # --- 컨테이너 타입 사전 선정 ---
@@ -340,72 +487,118 @@ def pack_footprint_into_bin(fp, b, max_wt, max_len, max_h_container, max_w_conta
     return False
 
 # ===================================================================
-# --- 라벨 적용 (HC 사전 선정 반영) ---
+# --- 라벨 적용 (컨테이너별 실제 사용량 기준 자동 다운사이징) ---
 # ===================================================================
-def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h, max_w_container, container_h_used):
+def apply_labels(bins, max_20_len, max_20_wt, fr_max_len, max_dry_h, max_hc_h,
+                 max_w_container, container_h_used, auto_downgrade=True):
+    """
+    각 컨테이너의 실제 사용량(max_H, used_L, total_W)을 기준으로 라벨링.
+
+    [auto_downgrade=True - 기본] 실제 사용량 기준 자동 다운사이징
+      - STANDARD: max_H 기준으로 HC/Dry, used_L+total_W 기준으로 20ft/40ft 선택
+      - FR: used_L 기준으로 20ft/40ft Flat Rack 선택
+
+    [auto_downgrade=False] 패킹 가용 한계 그대로 라벨링
+      - container_h_used가 HC면 모두 40ft HC, DRY면 길이 기준 20ft/40ft Dry
+    """
     for b in bins:
-        is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
-        is_ow = b['max_W'] > max_w_container
-        is_oh = b['max_H'] > max_hc_h
-        is_ol = b['used_L'] > fr_max_len
-        tags = []
-        if is_oh: tags.append("OH")
-        if is_ow: tags.append("OW")
-        if is_ol: tags.append("OL")
-        if tags:
+        is_fr_bin = b.get('is_fr', False)
+
+        if is_fr_bin:
+            # FR 라벨링 — auto_downgrade와 무관하게 used_L 기준 다운사이징
+            is_20ft_size = b['used_L'] <= max_20_len and b['total_W'] <= max_20_wt
+            tags = []
+            if b['max_H'] > max_hc_h: tags.append(f"OH+{b['max_H']-max_hc_h}")
+            if b['max_W'] > max_w_container: tags.append(f"OW+{b['max_W']-max_w_container}")
+            if b['used_L'] > fr_max_len: tags.append(f"OL+{b['used_L']-fr_max_len}")
+            if not tags:
+                tags.append("FR")
             base = "20ft Flat Rack" if is_20ft_size else "40ft Flat Rack"
             b['c_label'] = f"{base} [{' + '.join(tags)}] #{b['id']}"
         else:
-            # HC 사전 선정 결과 우선 반영
-            if container_h_used == 'HC' or b['max_H'] > max_dry_h:
-                base = "40ft HC"
+            is_20ft_size = (b['used_L'] <= max_20_len
+                            and b['total_W'] <= max_20_wt)
+
+            if auto_downgrade:
+                # 실제 사용 max_H 기준
+                needs_hc = b['max_H'] > max_dry_h
+            else:
+                # 패킹 가용 한계 그대로
+                needs_hc = (container_h_used == 'HC') or (b['max_H'] > max_dry_h)
+
+            if needs_hc:
+                base = "40ft HC"  # 20ft HC는 실무에서 드물어 제외
             else:
                 base = "20ft Dry" if is_20ft_size else "40ft Dry"
             b['c_label'] = f"{base} #{b['id']}"
     return bins
 
 # ===================================================================
-# --- 메인 패킹 계산 ---
+# --- FR 전용 패킹 (길이 합산만 체크, 회전 없음) ---
+# ===================================================================
+def pack_fr_into_bin(fp, b, max_len, max_wt):
+    """
+    FR 컨테이너에 화물 적재.
+    - 길이 합산만 체크 (폭/높이는 OW/OH 태그로 통과)
+    - 화물 회전 없음 (사용자 정의: FR은 옆에서 적재, 박스 L 그대로)
+    - 중량 합산은 체크 (40ft FR 중량 한계 적용)
+    """
+    if b['used_L'] + fp['L'] > max_len: return False
+    if b['total_W'] + fp['WEIGHT'] > max_wt: return False
+    b['rows'].append({'items': [fp], 'used_W': fp['W'], 'max_L': fp['L']})
+    b['used_L'] += fp['L']
+    b['total_W'] += fp['WEIGHT']
+    b['max_W'] = max(b['max_W'], fp['W'])
+    b['max_H'] = max(b['max_H'], fp['H'])
+    b['groups'].add(fp['GROUP'])
+    return True
+
+# ===================================================================
+# --- 메인 패킹 계산 (STANDARD + FR 분리 처리) ---
 # ===================================================================
 def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len,
                              max_dry_h, max_hc_h, max_w_container,
                              use_balancing, allow_stack, force_container_type,
-                             global_load_mode, balancing_eff=95):
-    # 1. 풋프린트 생성 (다단 묶음)
-    fps = build_footprints(df, max_w_container, allow_stack)
+                             global_load_mode, balancing_eff=95, fr_combine=True,
+                             auto_downgrade=True):
+    # 1. 풋프린트 생성 (STANDARD/FR 분리)
+    standard_fps, fr_fps, classify_summary = build_footprints(
+        df, max_w_container, max_hc_h, max_40_len, allow_stack
+    )
 
-    # 2. 컨테이너 타입 사전 선정 (강제 옵션 우선)
-    max_h_container, h_type = decide_container_height(fps, max_dry_h, max_hc_h, force_container_type)
+    # 2. STANDARD 컨테이너 타입 결정 (강제 옵션 우선)
+    max_h_container, h_type = decide_container_height(
+        standard_fps, max_dry_h, max_hc_h, force_container_type
+    )
 
-    # 3. 풋프린트 정렬: W 큰순 → H 큰순 → L 큰순 → GROUP
-    fps.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], str(x['GROUP'])))
+    # 3. STANDARD 풋프린트 정렬: W 큰순 → H 큰순 → L 큰순 → GROUP
+    standard_fps.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], str(x['GROUP'])))
 
-    bins = []
+    standard_bins = []
     c_no = 1
 
-    # 4. 균분적재용 사전 컨테이너 생성
-    if use_balancing and fps:
-        total_w_kg = sum(fp['WEIGHT'] for fp in fps)
-        floor_area_needed = sum(fp['L'] * fp['W'] for fp in fps)
+    # 4. 균분적재용 사전 컨테이너 생성 (STANDARD 풀만)
+    if use_balancing and standard_fps:
+        total_w_kg = sum(fp['WEIGHT'] for fp in standard_fps)
+        floor_area_needed = sum(fp['L'] * fp['W'] for fp in standard_fps)
         floor_area_per_bin = max_40_len * max_w_container * (balancing_eff / 100.0)
         est_by_area = math.ceil(floor_area_needed / floor_area_per_bin)
         est_by_wt = math.ceil(total_w_kg / max_40_wt) if total_w_kg > 0 else 1
         est_bins = max(1, est_by_area, est_by_wt)
         for _ in range(est_bins):
-            bins.append({
+            standard_bins.append({
                 'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
-                'max_W': 0, 'max_H': 0, 'groups': set()
+                'max_W': 0, 'max_H': 0, 'groups': set(), 'is_fr': False
             })
             c_no += 1
 
-    # 5. 풋프린트 배치
-    for fp in fps:
-        if use_balancing and bins:
-            # 같은 GROUP 우선 + 적재 길이 적은 컨테이너 우선
-            bins.sort(key=lambda b: (0 if fp['GROUP'] in b['groups'] else 1, b['used_L']))
+    # 5. STANDARD 풋프린트 배치
+    for fp in standard_fps:
+        if use_balancing and standard_bins:
+            standard_bins.sort(key=lambda b: (0 if fp['GROUP'] in b['groups'] else 1, b['used_L']))
 
         placed = False
-        for b in bins:
+        for b in standard_bins:
             if pack_footprint_into_bin(fp, b, max_40_wt, max_40_len, max_h_container, max_w_container):
                 placed = True
                 break
@@ -413,30 +606,49 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len,
         if not placed:
             new_bin = {
                 'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
-                'max_W': 0, 'max_H': 0, 'groups': set()
+                'max_W': 0, 'max_H': 0, 'groups': set(), 'is_fr': False
             }
             if pack_footprint_into_bin(fp, new_bin, max_40_wt, max_40_len, max_h_container, max_w_container):
-                bins.append(new_bin)
+                standard_bins.append(new_bin)
                 c_no += 1
             else:
-                # 한 풋프린트가 너무 커서 못 들어감 → FR 케이스
-                new_bin['rows'].append({'items': [fp], 'used_W': fp['W'], 'max_L': fp['L']})
-                new_bin['used_L'] = fp['L']
-                new_bin['total_W'] = fp['WEIGHT']
-                new_bin['max_W'] = fp['W']
-                new_bin['max_H'] = fp['H']
-                new_bin['groups'].add(fp['GROUP'])
-                bins.append(new_bin)
-                c_no += 1
+                # 어떻게도 안 들어가는 풋프린트 → FR로 이동
+                fr_fps.append({**fp, 'cargo_type': 'FR', 'fr_reason': 'OVERFLOW',
+                               'rotation_status': 'FR_NO_ROTATE'})
 
-    # 6. 빈 컨테이너 정리
-    bins = [b for b in bins if b['used_L'] > 0]
-    bins.sort(key=lambda x: x['id'])
-    for idx, b in enumerate(bins):
+    # 6. FR 풋프린트 정렬: L 긴 순 → W 큰 순 (긴 화물 먼저 배치)
+    fr_fps.sort(key=lambda x: (-x['L'], -x['W']))
+
+    fr_bins = []
+    # 7. FR 패킹
+    for fp in fr_fps:
+        placed = False
+        if fr_combine:
+            # 같은 FR에 길이 합산해서 혼적
+            for b in fr_bins:
+                if pack_fr_into_bin(fp, b, max_40_len, max_40_wt):
+                    placed = True
+                    break
+        if not placed:
+            new_bin = {
+                'id': c_no, 'rows': [], 'used_L': 0, 'total_W': 0,
+                'max_W': 0, 'max_H': 0, 'groups': set(), 'is_fr': True
+            }
+            pack_fr_into_bin(fp, new_bin, max_40_len, max_40_wt)
+            fr_bins.append(new_bin)
+            c_no += 1
+
+    # 8. 통합 + 빈 컨테이너 정리 + ID 재정렬
+    all_bins = standard_bins + fr_bins
+    all_bins = [b for b in all_bins if b['used_L'] > 0]
+    # STANDARD 먼저, FR 나중에 정렬
+    all_bins.sort(key=lambda x: (x.get('is_fr', False), x['id']))
+    for idx, b in enumerate(all_bins):
         b['id'] = idx + 1
 
-    return apply_labels(bins, max_20_len, max_20_wt, max_40_len - 430,
-                        max_dry_h, max_hc_h, max_w_container, h_type)
+    return apply_labels(all_bins, max_20_len, max_20_wt, max_40_len - 430,
+                        max_dry_h, max_hc_h, max_w_container, h_type,
+                        auto_downgrade), classify_summary
 
 # ===================================================================
 # --- 3. 메인 화면 로직 ---
@@ -557,15 +769,39 @@ if file is not None:
             st.success(f"✅ 총 {len(df):,} 박스 복제 완료 (Q'ty 반영)")
 
             if 'bins' not in st.session_state or not st.session_state.get('manual_mode', False):
-                st.session_state.bins = calculate_expert_packing(
+                bins_result, classify_summary = calculate_expert_packing(
                     df, max_40_wt, max_40_len, max_20_wt, max_20_len,
                     max_dry_h, max_hc_h, max_width,
                     use_balancing, allow_stacking, force_container_type,
-                    global_load_mode, balancing_eff
+                    global_load_mode, balancing_eff, fr_combine, auto_downgrade
                 )
+                st.session_state.bins = bins_result
+                st.session_state.classify_summary = classify_summary
                 st.session_state.manual_mode = True
 
             bins = st.session_state.bins
+            classify_summary = st.session_state.get('classify_summary', {})
+
+            # 분류 결과 요약 표시
+            if classify_summary:
+                with st.expander("🔍 화물 분류 결과", expanded=False):
+                    s_cnt = classify_summary.get('STANDARD', 0)
+                    fr_items = {k: v for k, v in classify_summary.items() if k.startswith('FR')}
+                    st.markdown(f"- **일반(STANDARD)**: {s_cnt}박스")
+                    if fr_items:
+                        st.markdown("- **FR(특수)**:")
+                        for k, v in fr_items.items():
+                            reason = k.replace('FR (', '').replace(')', '')
+                            label = {
+                                'OH': '높이 초과 (>2,695mm)',
+                                'OW': '폭 초과 (회전해도 >2,350mm)',
+                                'OL': '길이 초과 (>12,034mm)',
+                                'FR_FORCE': 'P열 FR_FORCE 강제',
+                                'ROT_IMPOSSIBLE': '회전 fallback 차단 (FORK_L_STRICT)',
+                                'OVERFLOW': '일반 컨테이너 적재 실패 (잔여 공간 없음)'
+                            }.get(reason, reason)
+                            st.markdown(f"   - {label}: {v}박스")
+
             target_options = [f"{b_opt['id']}번" for b_opt in bins] + ["✨ 새 컨테이너"]
 
             st.subheader("📊 실시간 적재 요약")
