@@ -444,47 +444,121 @@ def decide_container_height(footprints, max_dry_h, max_hc_h, force_type='자동 
         return max_dry_h, 'DRY'
 
 # ===================================================================
-# --- 풋프린트 패킹 로직 (개선) ---
+# --- 풋프린트 패킹 로직 (Maximal Rectangles + BSSF) ---
 # ===================================================================
+def _prune_contained_rects(rects):
+    """포함 관계인 사각형 제거 (다른 rect 안에 완전히 들어가면 제거).
+    free_rects 누적 비효율 방지 — Maximal Rectangles 핵심."""
+    cleaned = []
+    n = len(rects)
+    for i in range(n):
+        ax, ay, aw, ah = rects[i]['x'], rects[i]['y'], rects[i]['w'], rects[i]['h']
+        ax2, ay2 = ax + aw, ay + ah
+        contained = False
+        for j in range(n):
+            if i == j: continue
+            bx, by, bw, bh = rects[j]['x'], rects[j]['y'], rects[j]['w'], rects[j]['h']
+            bx2, by2 = bx + bw, by + bh
+            if (bx <= ax and by <= ay and bx2 >= ax2 and by2 >= ay2
+                and (bw > aw or bh > ah or (bw == aw and bh == ah and i > j))):
+                contained = True
+                break
+        if not contained:
+            cleaned.append(rects[i])
+    return cleaned
+
 def pack_footprint_into_bin(fp, b, max_wt, max_len, max_h_container, max_w_container):
     """
-    한 풋프린트(= 다단 묶음)를 컨테이너에 적재.
-    기존 row(=L방향 슬라이스) 안에 W방향으로 추가 시도 후,
-    안 되면 새 row(L방향 신규 슬라이스) 생성.
+    Maximal Rectangles 기반 2D 패킹 (BSSF: Best Short Side Fit).
+
+    [원리]
+    - 컨테이너 바닥을 빈 사각형 리스트(free_rects)로 관리
+    - 새 박스가 들어갈 때 가장 딱 맞는 빈 사각형 선택 (short side 잔여공간 최소)
+    - 배치된 박스와 겹치는 모든 free_rect를 4방향(L/R/U/D)으로 분할
+    - 포함 관계인 사각형은 즉시 제거하여 free_rects 누적 방지
+    - 작은 박스가 큰 박스의 빈 옆/뒷자리에 자연스럽게 끼워 들어감
+
+    [좌표계]
+    - x축: 컨테이너 L방향 (0 ~ max_len)
+    - y축: 컨테이너 W방향 (0 ~ max_w_container)
     """
-    # 중량/높이 한계 사전 체크
+    # 사전 체크
     if b['total_W'] + fp['WEIGHT'] > max_wt: return False
     if fp['H'] > max_h_container: return False
     if fp['L'] > max_len: return False
     if fp['W'] > max_w_container: return False
 
-    # 1. 기존 row에 W방향으로 추가 시도
-    for r in b['rows']:
-        temp_max_L = max(r['max_L'], fp['L'])
-        new_used_L = b['used_L'] + (temp_max_L - r['max_L'])
-        if (r['used_W'] + fp['W'] <= max_w_container
-            and new_used_L <= max_len):
-            r['items'].append(fp)
-            r['used_W'] += fp['W']
-            b['used_L'] = new_used_L
-            r['max_L'] = temp_max_L
-            b['total_W'] += fp['WEIGHT']
-            b['max_W'] = max(b['max_W'], fp['W'])
-            b['max_H'] = max(b['max_H'], fp['H'])
-            b['groups'].add(fp['GROUP'])
-            return True
+    # 빈 사각형 / 배치 리스트 초기화
+    if 'free_rects' not in b:
+        b['free_rects'] = [{'x': 0, 'y': 0, 'w': max_len, 'h': max_w_container}]
+        b['placed'] = []
 
-    # 2. 새 row 생성 (L방향 신규 슬라이스)
-    if b['used_L'] + fp['L'] <= max_len:
-        b['rows'].append({'items': [fp], 'used_W': fp['W'], 'max_L': fp['L']})
-        b['used_L'] += fp['L']
-        b['total_W'] += fp['WEIGHT']
-        b['max_W'] = max(b['max_W'], fp['W'])
-        b['max_H'] = max(b['max_H'], fp['H'])
-        b['groups'].add(fp['GROUP'])
-        return True
+    # BSSF: 가장 적합한 빈 사각형 찾기
+    best_idx = -1
+    best_short = float('inf')
+    best_long = float('inf')
+    for i, r in enumerate(b['free_rects']):
+        if fp['L'] <= r['w'] and fp['W'] <= r['h']:
+            leftover_short = min(r['w'] - fp['L'], r['h'] - fp['W'])
+            leftover_long = max(r['w'] - fp['L'], r['h'] - fp['W'])
+            if (leftover_short < best_short
+                or (leftover_short == best_short and leftover_long < best_long)):
+                best_short = leftover_short
+                best_long = leftover_long
+                best_idx = i
 
-    return False
+    if best_idx == -1:
+        return False
+
+    # 배치 좌표 결정
+    target = b['free_rects'][best_idx]
+    placed_fp = dict(fp)
+    placed_fp['x'] = target['x']
+    placed_fp['y'] = target['y']
+    b['placed'].append(placed_fp)
+
+    # 통계 업데이트
+    new_x_end = placed_fp['x'] + fp['L']
+    new_y_end = placed_fp['y'] + fp['W']
+    b['used_L'] = max(b['used_L'], new_x_end)
+    b['max_W'] = max(b['max_W'], new_y_end)
+    b['max_H'] = max(b['max_H'], fp['H'])
+    b['total_W'] += fp['WEIGHT']
+    b['groups'].add(fp['GROUP'])
+
+    # Maximal Rectangles: 배치된 박스와 겹치는 모든 free_rect를 4방향 분할
+    used_x1, used_y1 = placed_fp['x'], placed_fp['y']
+    used_x2, used_y2 = new_x_end, new_y_end
+
+    new_rects = []
+    for fr in b['free_rects']:
+        fx, fy, fw, fh = fr['x'], fr['y'], fr['w'], fr['h']
+        fx2, fy2 = fx + fw, fy + fh
+        # 사용 영역과 겹치지 않으면 그대로 유지
+        if used_x1 >= fx2 or used_x2 <= fx or used_y1 >= fy2 or used_y2 <= fy:
+            new_rects.append(fr)
+            continue
+        # 겹침 → 4방향(왼/오/아래/위)으로 분할
+        # 왼쪽 영역
+        if used_x1 > fx:
+            new_rects.append({'x': fx, 'y': fy, 'w': used_x1 - fx, 'h': fh})
+        # 오른쪽 영역
+        if used_x2 < fx2:
+            new_rects.append({'x': used_x2, 'y': fy, 'w': fx2 - used_x2, 'h': fh})
+        # 아래 영역
+        if used_y1 > fy:
+            new_rects.append({'x': fx, 'y': fy, 'w': fw, 'h': used_y1 - fy})
+        # 위 영역
+        if used_y2 < fy2:
+            new_rects.append({'x': fx, 'y': used_y2, 'w': fw, 'h': fy2 - used_y2})
+
+    # 포함 관계 제거 (Maximal Rectangles 핵심)
+    b['free_rects'] = _prune_contained_rects(new_rects)
+
+    # 호환성 유지를 위한 rows 구조 (시각화는 placed 사용, rows는 다운로드 매핑 등에 사용)
+    b['rows'].append({'items': [placed_fp], 'used_W': fp['W'], 'max_L': fp['L']})
+
+    return True
 
 # ===================================================================
 # --- 라벨 적용 (컨테이너별 실제 사용량 기준 자동 다운사이징) ---
@@ -572,7 +646,12 @@ def calculate_expert_packing(df, max_40_wt, max_40_len, max_20_wt, max_20_len,
     )
 
     # 3. STANDARD 풋프린트 정렬: W 큰순 → H 큰순 → L 큰순 → GROUP
-    standard_fps.sort(key=lambda x: (-x['W'], -x['H'], -x['L'], str(x['GROUP'])))
+    # 3. STANDARD 풋프린트 정렬 — Maximal Rectangles 효율을 위해 가장 긴 변 우선
+    #    1순위: max(L, W) 큰 순 (막대형 화물이 자리 잡지 못해 빈 컨테이너로 빠지는 현상 방지)
+    #    2순위: 면적(L×W) 큰 순
+    #    3순위: H 큰 순
+    #    4순위: GROUP (같은 PKG 인접 배치)
+    standard_fps.sort(key=lambda x: (-max(x['L'], x['W']), -(x['L']*x['W']), -x['H'], str(x['GROUP'])))
 
     standard_bins = []
     c_no = 1
@@ -806,10 +885,14 @@ if file is not None:
 
             st.subheader("📊 실시간 적재 요약")
             m1, m2, m3, m4 = st.columns(4)
-            packed_fp = sum(len(r['items']) for b in bins for r in b['rows'])
+            def _all_items(b):
+                """placed 우선, 없으면 rows에서 가져옴"""
+                if b.get('placed'):
+                    return b['placed']
+                return [fp for r in b['rows'] for fp in r['items']]
+            packed_fp = sum(len(_all_items(b)) for b in bins)
             packed_boxes = sum(
-                sum(fp['stack_count'] for r in b['rows'] for fp in r['items'])
-                for b in bins
+                sum(fp['stack_count'] for fp in _all_items(b)) for b in bins
             )
             m1.metric("전체 화물(박스)", f"{len(df):,} PKG")
             m2.metric("배정 박스", f"{packed_boxes:,} PKG")
@@ -822,10 +905,11 @@ if file is not None:
                 st.markdown(f'<div class="container-box">', unsafe_allow_html=True)
                 st.markdown(f"### 📦 {b['c_label']}")
 
-                # 풋프린트 상세
+                # 풋프린트 상세 — placed 우선 (Maximal Rectangles 결과), 없으면 rows fallback
                 t_data = []
-                for r in b['rows']:
-                    for fp in r['items']:
+                placed_items = b.get('placed', [])
+                if placed_items:
+                    for fp in placed_items:
                         t_data.append({
                             'PKG NO': fp['PKG NO'],
                             'ITEM': fp['ITEM'],
@@ -837,6 +921,20 @@ if file is not None:
                             'WEIGHT': fp['WEIGHT'],
                             '이동': f"{b['id']}번"
                         })
+                else:
+                    for r in b['rows']:
+                        for fp in r['items']:
+                            t_data.append({
+                                'PKG NO': fp['PKG NO'],
+                                'ITEM': fp['ITEM'],
+                                'L(회전후)': fp['L'],
+                                'W(회전후)': fp['W'],
+                                'H(누적)': fp['H'],
+                                '단수': fp['stack_count'],
+                                'LOAD': fp['load_mode'],
+                                'WEIGHT': fp['WEIGHT'],
+                                '이동': f"{b['id']}번"
+                            })
 
                 df_edit = pd.DataFrame(t_data)
                 edited_df = st.data_editor(
@@ -849,7 +947,8 @@ if file is not None:
                     cur_max_l = max_20_len if "20ft" in b['c_label'] else max_40_len
                     cur_max_w = max_20_wt if "20ft" in b['c_label'] else max_40_wt
                     cur_max_h = max_hc_h if "HC" in b['c_label'] else max_dry_h
-                    used_width = max([r['used_W'] for r in b['rows']] + [0])
+                    # placed 우선, 없으면 rows fallback
+                    used_width = b.get('max_W', 0) or max([r['used_W'] for r in b['rows']] + [0])
                     used_height = b['max_H']
 
                     c1, c2, c3, c4 = st.columns(4)
@@ -870,26 +969,46 @@ if file is not None:
                         c4.markdown(f"**↕️ 높이:** {used_height:,}/{cur_max_h:,}mm")
                         c4.progress(min(1.0, used_height/cur_max_h))
 
-                    # 평면도
+                    # 평면도 — Maximal Rectangles 결과의 (x, y) 좌표 직접 사용
                     fig = go.Figure()
                     fig.add_shape(type="rect", x0=b['used_L'], y0=0, x1=cur_max_l, y1=max_width,
                                   fillcolor="#e1e4e8", opacity=0.4, line_width=0)
                     fig.add_shape(type="rect", x0=0, y0=0, x1=cur_max_l, y1=max_width,
                                   line=dict(color=MAIN_COLOR, width=2))
-                    cx = 0
-                    for r in b['rows']:
-                        cy = (max_width - r['used_W']) / 2
-                        for fp in r['items']:
+
+                    # placed 우선 사용 (Maximal Rectangles 결과). 없으면 rows fallback (FR 등).
+                    placed_items = b.get('placed', [])
+                    if placed_items:
+                        for fp in placed_items:
+                            x0, y0 = fp.get('x', 0), fp.get('y', 0)
+                            x1, y1 = x0 + fp['L'], y0 + fp['W']
                             fig.add_shape(type="rect",
-                                          x0=cx, y0=cy, x1=cx+fp['L'], y1=cy+fp['W'],
+                                          x0=x0, y0=y0, x1=x1, y1=y1,
                                           fillcolor=ACCENT_COLOR, opacity=0.8,
                                           line=dict(color="white", width=1))
-                            label_text = f"{fp['PKG NO']}<br>{fp['stack_count']}단" if fp['stack_count'] > 1 else str(fp['PKG NO'])
-                            fig.add_annotation(x=cx+fp['L']/2, y=cy+fp['W']/2,
+                            label_text = (f"{fp['PKG NO']}<br>{fp['stack_count']}단"
+                                          if fp['stack_count'] > 1 else str(fp['PKG NO']))
+                            fig.add_annotation(x=(x0+x1)/2, y=(y0+y1)/2,
                                                text=label_text, showarrow=False,
                                                font=dict(color="white", size=9))
-                            cy += fp['W']
-                        cx += r['max_L']
+                    else:
+                        # FR 등 placed 없는 컨테이너 fallback
+                        cx = 0
+                        for r in b['rows']:
+                            cy = (max_width - r['used_W']) / 2
+                            for fp in r['items']:
+                                fig.add_shape(type="rect",
+                                              x0=cx, y0=cy, x1=cx+fp['L'], y1=cy+fp['W'],
+                                              fillcolor=ACCENT_COLOR, opacity=0.8,
+                                              line=dict(color="white", width=1))
+                                label_text = (f"{fp['PKG NO']}<br>{fp['stack_count']}단"
+                                              if fp['stack_count'] > 1 else str(fp['PKG NO']))
+                                fig.add_annotation(x=cx+fp['L']/2, y=cy+fp['W']/2,
+                                                   text=label_text, showarrow=False,
+                                                   font=dict(color="white", size=9))
+                                cy += fp['W']
+                            cx += r['max_L']
+
                     fig.add_shape(type="line", x0=b['used_L'], y0=-200, x1=b['used_L'], y1=max_width+450,
                                   line=dict(color=ALERT_COLOR, width=2, dash="dash"))
                     if b['used_L'] > 100:
@@ -912,10 +1031,13 @@ if file is not None:
 
             mapping = {}
             for bx in bins:
-                for r in bx['rows']:
-                    for fp in r['items']:
-                        for sub in fp['sub_items']:
-                            mapping[sub['row_idx']] = bx['c_label']
+                # placed 우선 (STANDARD), rows fallback (FR)
+                items_iter = bx.get('placed') or [
+                    fp for r in bx['rows'] for fp in r['items']
+                ]
+                for fp in items_iter:
+                    for sub in fp.get('sub_items', []):
+                        mapping[sub['row_idx']] = bx['c_label']
 
             if file.name.endswith('.xlsx'):
                 file.seek(0)
